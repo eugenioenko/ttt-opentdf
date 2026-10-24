@@ -15,42 +15,16 @@ M.VALUE_STATES = {
   { label = "Inactive", value = "inactive" },
 }
 
+local function request(lv)
+  local req = { state = lv.state }
+  if lv.namespace and lv.namespace ~= "" then
+    req.namespace = lv.namespace
+  end
+  return req
+end
+
 local function extract(data)
   return data.attributes
-end
-
-M.attributes = UI.list("attributes", {
-  method = SVC.ATTR .. "ListAttributes",
-  search = true,
-  request = function(lv)
-    local req = { state = lv.state }
-    if lv.namespace and lv.namespace ~= "" then
-      req.namespace = lv.namespace
-    end
-    return req
-  end,
-  extract = extract,
-  on_loaded = function()
-    M.values_follow()
-  end,
-})
-
--- The values of the attribute selected in M.attributes, filtered client-side.
-M.values = UI.list("values", { client = true })
-
-function M.namespace_list(ns_id)
-  return UI.sub_list("ns-attrs:" .. ns_id, {
-    method = SVC.ATTR .. "ListAttributes",
-    search = true,
-    request = function(lv)
-      return { namespace = ns_id, state = lv.state }
-    end,
-    extract = extract,
-  })
-end
-
-function M.attribute_values(a)
-  return UI.sub_list("attr-values:" .. a.id, { client = true })
 end
 
 function M.filter_values(values, lv)
@@ -68,6 +42,7 @@ function M.filter_values(values, lv)
   return out
 end
 
+-- Keeps M.values on the attribute selected in M.attributes.
 function M.values_follow()
   local a = UI.selected(M.attributes)
   if M.values.attr ~= a then
@@ -77,6 +52,37 @@ function M.values_follow()
   end
   M.values.all = M.filter_values(a and a.values, M.values)
   UI.slice(M.values)
+end
+
+M.attributes = UI.list("attributes", {
+  method = SVC.ATTR .. "ListAttributes",
+  search = true,
+  request = request,
+  extract = extract,
+  on_loaded = M.values_follow,
+})
+
+M.values = UI.list("values", { client = true })
+
+function M.namespace_list(ns_id)
+  local lv = UI.sub_list("ns-attrs:" .. ns_id, {
+    method = SVC.ATTR .. "ListAttributes",
+    search = true,
+    request = request,
+    extract = extract,
+  })
+  lv.namespace = ns_id
+  return lv
+end
+
+function M.attribute_values(a)
+  return UI.sub_list("attr-values:" .. a.id, { client = true })
+end
+
+-- Refilters an attribute's own values list, for its Values tab.
+function M.refilter(a, lv)
+  lv.all = M.filter_values(a.values, lv)
+  UI.slice(lv)
 end
 
 -- Selects a newly created value when its attribute is the one on screen.

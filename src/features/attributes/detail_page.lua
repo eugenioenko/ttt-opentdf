@@ -8,51 +8,55 @@ local Values = require("features.attributes.values_table")
 
 local M = {}
 
+local function tabs(a)
+  return {
+    { id = "details", label = "Details" },
+    { id = "values", label = "Values (" .. #(a.values or {}) .. ")" },
+  }
+end
+
+local function details(p, a)
+  p:keyvalue(UI.kv({
+    { "FQN", a.fqn },
+    { "Namespace", a.namespace and a.namespace.name },
+    { "Name", a.name },
+    { "Rule", U.rule(a) },
+    { "Status", U.active(a.active) },
+    { "Values", tostring(#(a.values or {})) },
+    { "Labels", U.labels(a.metadata) },
+    { "ID", a.id },
+    { "Created", U.created(a) },
+    { "Updated", U.updated(a) },
+  }))
+end
+
+local function values_tab(p, tab, a, values)
+  Store.refilter(a, values)
+  Values.filters(p, values, U.bind(Store.refilter, a, values), 1)
+  Values.table(p, tab, a, values, "Values")
+end
+
+local function actions(page, a, h, tab)
+  if page.tab == "values" then
+    h:button({ label = "New", on_click = U.bind(Commands.new_value, a) })
+  else
+    Policy.actions(h, a, U.bind(Commands.attribute, tab))
+  end
+end
+
+local function render(page, a, values, p, tab)
+  if Router.tab_strip(p, page, tabs(a)) == "values" then
+    values_tab(p, tab, a, values)
+  else
+    details(p, a)
+  end
+end
+
 function M.page(a)
   local page = { title = a.fqn, tab_title = a.name }
   local values = Store.attribute_values(a)
-  page.actions = function(h, tab)
-    if page.tab == "values" then
-      h:button({
-        label = "New",
-        on_click = function()
-          Commands.new_value(a)
-        end,
-      })
-    else
-      Policy.actions(h, a, function(cmd)
-        Commands.attribute(tab, cmd, a)
-      end)
-    end
-  end
-  page.render = function(p, tab)
-    local current = Router.tab_strip(p, page, {
-      { id = "details", label = "Details" },
-      { id = "values", label = "Values (" .. #(a.values or {}) .. ")" },
-    })
-    if current == "values" then
-      local refilter = function()
-        values.all = Store.filter_values(a.values, values)
-        UI.slice(values)
-      end
-      refilter()
-      Values.filters(p, values, refilter, 1)
-      Values.table(p, tab, a, values, "Values")
-      return
-    end
-    p:keyvalue(UI.kv({
-      { "FQN", a.fqn },
-      { "Namespace", a.namespace and a.namespace.name },
-      { "Name", a.name },
-      { "Rule", U.rule(a) },
-      { "Status", U.active(a.active) },
-      { "Values", tostring(#(a.values or {})) },
-      { "Labels", U.labels(a.metadata) },
-      { "ID", a.id },
-      { "Created", U.created(a) },
-      { "Updated", U.updated(a) },
-    }))
-  end
+  page.actions = U.bind(actions, page, a)
+  page.render = U.bind(render, page, a, values)
   return page
 end
 

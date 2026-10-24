@@ -8,6 +8,24 @@ local Store = require("features.actions.store")
 
 local M = {}
 
+local function reload()
+  UI.load(Store.list, true)
+end
+
+local function created(name, after)
+  ttt.notify("Created action " .. name)
+  reload()
+  Api.refresh_counts()
+  if after then
+    after()
+  end
+end
+
+local function create(after, v, done)
+  local name = U.trim(v.name)
+  UI.save(SVC.ACT .. "CreateAction", { namespaceId = v.namespace, name = name }, done, U.bind(created, name, after))
+end
+
 function M.new(ns, after)
   UI.dialog({
     title = "New Action",
@@ -16,17 +34,22 @@ function M.new(ns, after)
       Policy.namespace_field(ns or Store.list.namespace),
       { key = "name", label = "Name", placeholder = "approve", required = true },
     },
-    on_submit = function(v, done)
-      UI.save(SVC.ACT .. "CreateAction", { namespaceId = v.namespace, name = U.trim(v.name) }, done, function()
-        ttt.notify("Created action " .. U.trim(v.name))
-        UI.load(Store.list, true)
-        Api.refresh_counts()
-        if after then
-          after()
-        end
-      end)
-    end,
+    on_submit = U.bind(create, after),
   })
+end
+
+local function renamed(a, name)
+  a.name = name
+end
+
+local function rename(a, v, done)
+  local name = U.trim(v.name)
+  UI.save(SVC.ACT .. "UpdateAction", { id = a.id, name = name }, done, U.bind(renamed, a, name))
+end
+
+local function deleted()
+  reload()
+  Api.refresh_counts()
 end
 
 function M.run(cmd, a)
@@ -41,11 +64,7 @@ function M.run(cmd, a)
       title = "Rename Action",
       submit = "Save",
       fields = { { key = "name", label = "Name", value = a.name, required = true } },
-      on_submit = function(v, done)
-        UI.save(SVC.ACT .. "UpdateAction", { id = a.id, name = U.trim(v.name) }, done, function()
-          a.name = U.trim(v.name)
-        end)
-      end,
+      on_submit = U.bind(rename, a),
     })
   elseif cmd == "delete" then
     UI.confirm(
@@ -53,10 +72,7 @@ function M.run(cmd, a)
       SVC.ACT .. "DeleteAction",
       { id = a.id },
       "Deleted " .. a.name,
-      function()
-        UI.load(Store.list, true)
-        Api.refresh_counts()
-      end
+      deleted
     )
   end
 end

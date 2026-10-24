@@ -8,28 +8,44 @@ local Actions = require("features.actions")
 
 local M = {}
 
+local TABS = {
+  { id = "details", label = "Details" },
+  { id = "attributes", label = "Attributes" },
+  { id = "actions", label = "Actions" },
+}
+
+local ATTRIBUTE_COLUMNS = {
+  { label = "Name" },
+  { label = "Rule", width = 9 },
+  { label = "Values", width = 6, align = "right" },
+  { label = "Status", width = 9 },
+}
+
+local ACTION_COLUMNS = { { label = "Name" }, { label = "Type", width = 9 }, { label = "Created", width = 16 } }
+
+local function attribute_row(a)
+  return { a.name, U.rule(a), tostring(#(a.values or {})), U.active(a.active) }
+end
+
+local function action_row(a)
+  return { a.name, a.kind, U.created(a) }
+end
+
+local function attribute_filters(n, attrs, h)
+  UI.search(h, attrs, "Search attributes in " .. n.name .. "…")
+  UI.state_filter(h, attrs)
+end
+
 local function attributes_tab(p, tab, n, attrs)
   UI.ensure(attrs)
-  UI.toolbar(p, function(h)
-    UI.search(h, attrs, "Search attributes in " .. n.name .. "…")
-    UI.state_filter(h, attrs)
-  end)
+  UI.toolbar(p, U.bind(attribute_filters, n, attrs))
   UI.table(p, attrs, {
     frame = "Attributes",
     noun = "attributes",
-    columns = {
-      { label = "Name" },
-      { label = "Rule", width = 9 },
-      { label = "Values", width = 6, align = "right" },
-      { label = "Status", width = 9 },
-    },
-    row = function(a)
-      return { a.name, U.rule(a), tostring(#(a.values or {})), U.active(a.active) }
-    end,
+    columns = ATTRIBUTE_COLUMNS,
+    row = attribute_row,
     style = U.inactive_style,
-    on_open = function(a)
-      Attributes.commands.attribute(tab, "open", a)
-    end,
+    on_open = U.bind(Attributes.commands.attribute, tab, "open"),
   })
 end
 
@@ -39,70 +55,61 @@ local function actions_tab(p, acts)
     frame = "Actions",
     frame_opts = { margin_top = 1 },
     noun = "actions",
-    columns = { { label = "Name" }, { label = "Type", width = 9 }, { label = "Created", width = 16 } },
-    row = function(a)
-      return { a.name, a.kind, U.created(a) }
-    end,
+    columns = ACTION_COLUMNS,
+    row = action_row,
     style = Actions.store.style,
-    on_open = function(a)
-      Actions.commands.run("rename", a)
-    end,
+    on_open = U.bind(Actions.commands.run, "rename"),
   })
+end
+
+local function details(p, n)
+  p:keyvalue(UI.kv({
+    { "Name", n.name },
+    { "FQN", n.fqn },
+    { "Status", U.active(n.active) },
+    { "Labels", U.labels(n.metadata) },
+    { "ID", n.id },
+    { "Created", U.created(n) },
+    { "Updated", U.updated(n) },
+  }))
+end
+
+local function new_attribute(n, attrs)
+  Attributes.commands.new_attribute(n.id, U.bind(UI.load, attrs, true))
+end
+
+local function new_action(n, acts)
+  Actions.commands.new(n.id, U.bind(UI.load, acts, true))
+end
+
+local function actions(page, n, lists, h, tab)
+  if page.tab == "attributes" then
+    h:button({ label = "New", on_click = U.bind(new_attribute, n, lists.attrs) })
+    UI.refresh_button(h, lists.attrs)
+  elseif page.tab == "actions" then
+    h:button({ label = "New", on_click = U.bind(new_action, n, lists.acts) })
+    UI.refresh_button(h, lists.acts)
+  else
+    Policy.actions(h, n, U.bind(Commands.run, tab))
+  end
+end
+
+local function render(page, n, lists, p, tab)
+  local current = Router.tab_strip(p, page, TABS)
+  if current == "attributes" then
+    attributes_tab(p, tab, n, lists.attrs)
+  elseif current == "actions" then
+    actions_tab(p, lists.acts)
+  else
+    details(p, n)
+  end
 end
 
 function M.page(n)
   local page = { title = n.name }
-  local attrs = Attributes.store.namespace_list(n.id)
-  local acts = Actions.store.namespace_list(n.id)
-  page.actions = function(h, tab)
-    if page.tab == "attributes" then
-      h:button({
-        label = "New",
-        on_click = function()
-          Attributes.commands.new_attribute(n.id, function()
-            UI.load(attrs, true)
-          end)
-        end,
-      })
-      UI.refresh_button(h, attrs)
-    elseif page.tab == "actions" then
-      h:button({
-        label = "New",
-        on_click = function()
-          Actions.commands.new(n.id, function()
-            UI.load(acts, true)
-          end)
-        end,
-      })
-      UI.refresh_button(h, acts)
-    else
-      Policy.actions(h, n, function(cmd)
-        Commands.run(tab, cmd, n)
-      end)
-    end
-  end
-  page.render = function(p, tab)
-    local current = Router.tab_strip(p, page, {
-      { id = "details", label = "Details" },
-      { id = "attributes", label = "Attributes" },
-      { id = "actions", label = "Actions" },
-    })
-    if current == "attributes" then
-      attributes_tab(p, tab, n, attrs)
-    elseif current == "actions" then
-      actions_tab(p, acts)
-    else
-      p:keyvalue(UI.kv({
-        { "Name", n.name },
-        { "FQN", n.fqn },
-        { "Status", U.active(n.active) },
-        { "Labels", U.labels(n.metadata) },
-        { "ID", n.id },
-        { "Created", U.created(n) },
-        { "Updated", U.updated(n) },
-      }))
-    end
-  end
+  local lists = { attrs = Attributes.store.namespace_list(n.id), acts = Actions.store.namespace_list(n.id) }
+  page.actions = U.bind(actions, page, n, lists)
+  page.render = U.bind(render, page, n, lists)
   return page
 end
 

@@ -1,3 +1,4 @@
+local U = require("core.util")
 local S = require("core.state")
 local SVC = require("core.services")
 local Api = require("core.api")
@@ -15,6 +16,13 @@ M.state = {
   list = UI.list("entitlements", { client = true }),
 }
 
+local function by_fqn(a, b)
+  if a.fqn == b.fqn then
+    return a.entity < b.entity
+  end
+  return a.fqn < b.fqn
+end
+
 local function rows_from(entities)
   local rows = {}
   for _, ent in ipairs(entities) do
@@ -27,12 +35,7 @@ local function rows_from(entities)
       rows[#rows + 1] = { fqn = fqn, actions = table.concat(names, ", "), entity = ent.ephemeralId or "" }
     end
   end
-  table.sort(rows, function(a, b)
-    if a.fqn == b.fqn then
-      return a.entity < b.entity
-    end
-    return a.fqn < b.fqn
-  end)
+  table.sort(rows, by_fqn)
   return rows
 end
 
@@ -51,6 +54,24 @@ function M.filter()
   UI.slice(st.list)
 end
 
+local function received(st, label, err, data)
+  st.busy = false
+  st.list.loading = false
+  if err then
+    st.err = err
+    st.list.all = {}
+    UI.slice(st.list)
+    S.redraw()
+    return
+  end
+  local entities = data.entitlements or {}
+  st.all = rows_from(entities)
+  st.entities = #entities
+  st.ran = label
+  M.filter()
+  S.redraw()
+end
+
 function M.run()
   local st = M.state
   if Entity.missing(st) then
@@ -60,27 +81,10 @@ function M.run()
   st.err = nil
   st.list.loading = true
   S.redraw()
-  local label = Entity.label(st.entity)
   Api.call(SVC.AUTHZ .. "GetEntitlements", {
     entityIdentifier = Entity.identifier(st.entity),
     withComprehensiveHierarchy = st.comprehensive,
-  }, function(err, data)
-    st.busy = false
-    st.list.loading = false
-    if err then
-      st.err = err
-      st.list.all = {}
-      UI.slice(st.list)
-      S.redraw()
-      return
-    end
-    local entities = data.entitlements or {}
-    st.all = rows_from(entities)
-    st.entities = #entities
-    st.ran = label
-    M.filter()
-    S.redraw()
-  end)
+  }, U.bind(received, st, Entity.label(st.entity)))
 end
 
 function M.summary()

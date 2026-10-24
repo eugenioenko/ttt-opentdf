@@ -157,4 +157,17 @@ function U.inactive_style(x)
   return x.active == false and "muted" or "default"
 end
 
+-- Bound arguments come first, then the caller's.
+function U.bind(fn, ...)
+  local bound = { n = select("#", ...), ... }
+  return function(...)
+    local n = select("#", ...)
+    local args = { unpack(bound, 1, bound.n) }
+    for i = 1, n do
+      args[bound.n + i] = select(i, ...)
+    end
+    return fn(unpack(args, 1, bound.n + n))
+  end
+end
+
 return U

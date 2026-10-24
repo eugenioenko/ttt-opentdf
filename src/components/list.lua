@@ -1,3 +1,4 @@
+local U = require("core.util")
 local Api = require("core.api")
 local S = require("core.state")
 
@@ -28,6 +29,36 @@ function M.sub_list(key, spec)
   return S.lists[key] or M.list(key, spec)
 end
 
+local function loaded(lv, gen, keep, err, data)
+  if gen ~= lv.gen then
+    return
+  end
+  lv.loading = false
+  lv.loaded = true
+  if err then
+    lv.err = err
+    lv.items = {}
+    S.redraw()
+    return
+  end
+  lv.err = nil
+  lv.items = lv.spec.extract(data) or {}
+  lv.total = Api.total(data)
+  if lv.total == 0 then
+    lv.total = lv.offset + #lv.items
+  end
+  if not keep then
+    lv.sel = 1
+  end
+  if lv.sel > #lv.items then
+    lv.sel = math.max(#lv.items, 1)
+  end
+  if lv.spec.on_loaded then
+    lv.spec.on_loaded(lv)
+  end
+  S.redraw()
+end
+
 function M.load(lv, keep)
   local spec = lv.spec
   if spec.client then
@@ -37,41 +68,12 @@ function M.load(lv, keep)
   end
   lv.loading = true
   lv.gen = lv.gen + 1
-  local gen = lv.gen
   local req = spec.request and spec.request(lv) or {}
   req.pagination = { limit = S.page_size, offset = lv.offset }
   if spec.search and lv.search ~= "" then
     req.search = { term = lv.search }
   end
-  Api.call(spec.method, req, function(err, data)
-    if gen ~= lv.gen then
-      return
-    end
-    lv.loading = false
-    lv.loaded = true
-    if err then
-      lv.err = err
-      lv.items = {}
-      S.redraw()
-      return
-    end
-    lv.err = nil
-    lv.items = spec.extract(data) or {}
-    lv.total = Api.total(data)
-    if lv.total == 0 then
-      lv.total = lv.offset + #lv.items
-    end
-    if not keep then
-      lv.sel = 1
-    end
-    if lv.sel > #lv.items then
-      lv.sel = math.max(#lv.items, 1)
-    end
-    if spec.on_loaded then
-      spec.on_loaded(lv)
-    end
-    S.redraw()
-  end)
+  Api.call(spec.method, req, U.bind(loaded, lv, lv.gen, keep))
 end
 
 function M.slice(lv)

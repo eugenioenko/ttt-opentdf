@@ -11,28 +11,38 @@ M.STATES = {
   { label = "Any state", value = "ACTIVE_STATE_ENUM_ANY" },
 }
 
+local function run_search(lv)
+  lv.offset = 0
+  if lv.on_search then
+    lv.on_search()
+    S.redraw()
+  else
+    List.load(lv)
+  end
+end
+
+local function set_search(lv, text)
+  lv.search = text
+  lv.search_later()
+end
+
 -- on_search replaces the reload, for client lists that refilter themselves.
 function M.search(h, lv, placeholder, on_search)
   lv.on_search = on_search
-  lv.search_later = lv.search_later
-    or ttt.debounce(250, function()
-      lv.offset = 0
-      if lv.on_search then
-        lv.on_search()
-        S.redraw()
-      else
-        List.load(lv)
-      end
-    end)
+  lv.search_later = lv.search_later or ttt.debounce(250, U.bind(run_search, lv))
   h:input({
     placeholder = placeholder or "Search…",
     prefix = "⌕ ",
     value = lv.search,
-    on_change = function(text)
-      lv.search = text
-      lv.search_later()
-    end,
+    on_change = U.bind(set_search, lv),
   })
+end
+
+local function pick(options, on_pick, command)
+  local o = options[tonumber(command)]
+  if o then
+    on_pick(o.value)
+  end
 end
 
 -- Menu commands are option positions: ttt ignores menu entries whose command is
@@ -45,12 +55,7 @@ function M.dropdown(h, options, value, on_pick)
   h:dropdown({
     label = U.option_label(options, value) .. " ▾",
     entries = entries,
-    on_menu = function(command)
-      local o = options[tonumber(command)]
-      if o then
-        on_pick(o.value)
-      end
-    end,
+    on_menu = U.bind(pick, options, on_pick),
   })
 end
 
@@ -62,12 +67,14 @@ function M.with_all(label, options)
   return out
 end
 
+local function set_filter(lv, field, value)
+  lv[field] = value
+  lv.offset = 0
+  List.load(lv)
+end
+
 function M.filter(h, lv, field, options)
-  M.dropdown(h, options, lv[field] or "", function(value)
-    lv[field] = value
-    lv.offset = 0
-    List.load(lv)
-  end)
+  M.dropdown(h, options, lv[field] or "", U.bind(set_filter, lv, field))
 end
 
 function M.state_filter(h, lv)
@@ -78,16 +85,15 @@ function M.namespace_filter(h, lv)
   M.filter(h, lv, "namespace", M.with_all("All namespaces", S.namespaces))
 end
 
+local function refresh(lv, also)
+  List.load(lv, true)
+  if also then
+    also()
+  end
+end
+
 function M.refresh_button(h, lv, also)
-  h:button({
-    label = "Refresh",
-    on_click = function()
-      List.load(lv, true)
-      if also then
-        also()
-      end
-    end,
-  })
+  h:button({ label = "Refresh", on_click = U.bind(refresh, lv, also) })
 end
 
 return M

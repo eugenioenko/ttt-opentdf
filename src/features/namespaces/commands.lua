@@ -11,6 +11,26 @@ local Actions = require("features.actions")
 
 local M = {}
 
+local function reload()
+  UI.load(Store.list, true)
+end
+
+local function created(req)
+  ttt.notify("Created namespace " .. req.name)
+  reload()
+  Api.refresh_counts()
+  Api.load_pickers()
+end
+
+local function create(v, done)
+  local req = { name = U.trim(v.name) }
+  local labels = U.parse_labels(v.labels)
+  if next(labels) then
+    req.metadata = { labels = labels }
+  end
+  UI.save(SVC.NS .. "CreateNamespace", req, done, U.bind(created, req))
+end
+
 function M.new()
   UI.dialog({
     title = "New Namespace",
@@ -19,20 +39,14 @@ function M.new()
       { key = "name", label = "Name", placeholder = "example.com", required = true },
       { key = "labels", label = "Labels", placeholder = Policy.LABELS_HINT },
     },
-    on_submit = function(v, done)
-      local req = { name = U.trim(v.name) }
-      local labels = U.parse_labels(v.labels)
-      if next(labels) then
-        req.metadata = { labels = labels }
-      end
-      UI.save(SVC.NS .. "CreateNamespace", req, done, function()
-        ttt.notify("Created namespace " .. req.name)
-        UI.load(Store.list, true)
-        Api.refresh_counts()
-        Api.load_pickers()
-      end)
-    end,
+    on_submit = create,
   })
+end
+
+local function deactivated(n)
+  n.active = false
+  reload()
+  Api.refresh_counts()
 end
 
 function M.run(tab, cmd, n)
@@ -43,20 +57,14 @@ function M.run(tab, cmd, n)
   elseif cmd == "open" then
     Router.show(tab, "namespace:" .. n.id, require("features.namespaces.detail_page").page(n))
   elseif cmd == "labels" then
-    Policy.labels_dialog("Namespace " .. n.name, n, SVC.NS .. "UpdateNamespace", function()
-      UI.load(Store.list, true)
-    end)
+    Policy.labels_dialog("Namespace " .. n.name, n, SVC.NS .. "UpdateNamespace", reload)
   elseif cmd == "deactivate" then
     UI.confirm(
       "Deactivate namespace " .. n.name .. "? Its attributes and values are deactivated too.",
       SVC.NS .. "DeactivateNamespace",
       { id = n.id },
       "Deactivated " .. n.name,
-      function()
-        n.active = false
-        UI.load(Store.list, true)
-        Api.refresh_counts()
-      end
+      U.bind(deactivated, n)
     )
   elseif cmd == "attributes" then
     Router.open_for_namespace("attributes", Attributes.store.attributes, n.id)

@@ -11,6 +11,17 @@ M.PAGE_SIZES = {
   { label = "100 per page", value = "100" },
 }
 
+local function save(v, done)
+  local n = tonumber(v.page_size) or S.page_size
+  if n ~= S.page_size then
+    S.page_size = n
+    S.settings.page_size = n
+    storage.set("settings", S.settings)
+    S.reset_lists()
+  end
+  done()
+end
+
 function M.dialog()
   UI.dialog({
     title = "OpenTDF Settings",
@@ -18,16 +29,7 @@ function M.dialog()
     fields = {
       { key = "page_size", label = "Page size", kind = "enum", options = M.PAGE_SIZES, value = tostring(S.page_size) },
     },
-    on_submit = function(v, done)
-      local n = tonumber(v.page_size) or S.page_size
-      if n ~= S.page_size then
-        S.page_size = n
-        S.settings.page_size = n
-        storage.set("settings", S.settings)
-        S.reset_lists()
-      end
-      done()
-    end,
+    on_submit = save,
   })
 end
 

@@ -58,32 +58,40 @@ function M.missing(st)
   return false
 end
 
-function M.fields(h, entity, on_submit)
-  UI.frame(h, "Entity", function(b)
-    UI.dropdown(b, M.TYPES, entity.kind, function(kind)
-      if kind ~= entity.kind then
-        entity.kind = kind
-        entity.value = kind == "clientId" and S.conn.client_id or ""
-      end
-      S.redraw()
-    end)
-  end, { width = 28 })
-  if entity.kind == "request" then
-    UI.frame(h, "Value", function(b)
-      b:label({ text = M.HINTS.request, style = "muted", padding_left = 1 })
-    end)
-  else
-    h:input({
-      border = true,
-      title = U.option_label(M.TYPES, entity.kind),
-      value = entity.value,
-      placeholder = M.HINTS[entity.kind],
-      on_change = function(text)
-        entity.value = text
-      end,
-      on_submit = on_submit,
-    })
+local function set_kind(entity, kind)
+  if kind ~= entity.kind then
+    entity.kind = kind
+    entity.value = kind == "clientId" and S.conn.client_id or ""
   end
+  S.redraw()
+end
+
+local function set_value(entity, text)
+  entity.value = text
+end
+
+local function kind_picker(entity, b)
+  UI.dropdown(b, M.TYPES, entity.kind, U.bind(set_kind, entity))
+end
+
+local function request_hint(b)
+  b:label({ text = M.HINTS.request, style = "muted", padding_left = 1 })
+end
+
+function M.fields(h, entity, on_submit)
+  UI.frame(h, "Entity", U.bind(kind_picker, entity), { width = 28 })
+  if entity.kind == "request" then
+    UI.frame(h, "Value", request_hint)
+    return
+  end
+  h:input({
+    border = true,
+    title = U.option_label(M.TYPES, entity.kind),
+    value = entity.value,
+    placeholder = M.HINTS[entity.kind],
+    on_change = U.bind(set_value, entity),
+    on_submit = on_submit,
+  })
 end
 
 return M

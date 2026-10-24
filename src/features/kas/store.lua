@@ -1,4 +1,5 @@
 local ttt = require("ttt")
+local U = require("core.util")
 local S = require("core.state")
 local SVC = require("core.services")
 local UI = require("components")
@@ -29,25 +30,11 @@ M.MODES = {
 -- The pinned first row of the servers list.
 M.ALL_KEYS = { all = true, name = "All keys" }
 
-M.servers = UI.list("kas", {
-  method = SVC.KAS .. "ListKeyAccessServers",
-  search = true,
-  extract = function(data)
-    local out = { M.ALL_KEYS }
-    for _, k in ipairs(data.keyAccessServers or {}) do
-      out[#out + 1] = k
-    end
-    return out
-  end,
-  on_loaded = function()
-    M.keys_follow(true)
-  end,
-})
-
-local function keys_request(lv, kas_id)
+-- lv.kas is the server whose keys the list shows; nil or ALL_KEYS shows all.
+local function keys_request(lv)
   local req = {}
-  if kas_id then
-    req.kasId = kas_id
+  if lv.kas and not lv.kas.all then
+    req.kasId = lv.kas.id
   end
   if lv.alg and lv.alg ~= "" then
     req.keyAlgorithm = lv.alg
@@ -59,25 +46,15 @@ local function extract_keys(data)
   return data.kasKeys
 end
 
+local KEYS_SPEC = { method = SVC.KAS .. "ListKeys", search = true, request = keys_request, extract = extract_keys }
+
 -- The keys of the server selected in M.servers.
-M.keys = UI.list("keys", {
-  method = SVC.KAS .. "ListKeys",
-  search = true,
-  request = function(lv)
-    return keys_request(lv, lv.kas and not lv.kas.all and lv.kas.id or nil)
-  end,
-  extract = extract_keys,
-})
+M.keys = UI.list("keys", KEYS_SPEC)
 
 function M.server_keys(k)
-  return UI.sub_list("kas-keys:" .. k.id, {
-    method = SVC.KAS .. "ListKeys",
-    search = true,
-    request = function(lv)
-      return keys_request(lv, k.id)
-    end,
-    extract = extract_keys,
-  })
+  local lv = UI.sub_list("kas-keys:" .. k.id, KEYS_SPEC)
+  lv.kas = k
+  return lv
 end
 
 function M.invalidate_keys()
@@ -88,9 +65,7 @@ function M.invalidate_keys()
   end
 end
 
-local keys_later, keys_cancel = ttt.debounce(150, function()
-  UI.load(M.keys)
-end)
+local keys_later, keys_cancel = ttt.debounce(150, U.bind(UI.load, M.keys))
 
 -- Arrow keys move through servers quickly, so key loads wait for a pause.
 function M.keys_follow(now)
@@ -109,6 +84,21 @@ function M.keys_follow(now)
   M.keys.loading = true
   keys_later()
 end
+
+local function extract_servers(data)
+  local out = { M.ALL_KEYS }
+  for _, k in ipairs(data.keyAccessServers or {}) do
+    out[#out + 1] = k
+  end
+  return out
+end
+
+M.servers = UI.list("kas", {
+  method = SVC.KAS .. "ListKeyAccessServers",
+  search = true,
+  extract = extract_servers,
+  on_loaded = U.bind(M.keys_follow, true),
+})
 
 function M.is_base(kk)
   return S.base and kk.key and S.base.kid == kk.key.keyId and S.base.kas_id == kk.kasId

@@ -27,24 +27,20 @@ local function badge(key)
   return tostring(n)
 end
 
+local function open(node)
+  if node.id == "conn" then
+    Connection.dialog()
+  else
+    Router.open(node.id)
+  end
+end
+
+local function link_list(items, b)
+  b:list({ items = items, inset = 1, badge_right = true, on_select = open })
+end
+
 local function links(p, items)
-  p:box({
-    height = #items,
-    render = function(b)
-      b:list({
-        items = items,
-        inset = 1,
-        badge_right = true,
-        on_select = function(node)
-          if node.id == "conn" then
-            Connection.dialog()
-          else
-            Router.open(node.id)
-          end
-        end,
-      })
-    end,
-  })
+  p:box({ height = #items, render = U.bind(link_list, items) })
 end
 
 local function section(p, s)
@@ -57,13 +53,15 @@ local function section(p, s)
   links(p, items)
 end
 
+local function nothing() end
+
 function M.render(p)
   S.panels.sidebar = p
   Api.ensure_connected()
   for _, s in ipairs(Nav.sections) do
     section(p, s)
   end
-  p:box({ render = function() end })
+  p:box({ render = nothing })
   if S.status == "error" then
     p:label({ text = "✕ " .. S.message, style = "danger", padding_left = 1 })
   end

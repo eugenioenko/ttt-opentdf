@@ -13,6 +13,28 @@ local function pages()
   return require("features.attributes.detail_page"), require("features.attributes.value_page")
 end
 
+local function reload()
+  UI.load(Store.attributes, true)
+end
+
+local function attribute_created(name, after)
+  ttt.notify("Created attribute " .. name)
+  reload()
+  Api.refresh_counts()
+  if after then
+    after()
+  end
+end
+
+local function create_attribute(after, v, done)
+  local req = { namespaceId = v.namespace, name = U.trim(v.name), rule = v.rule }
+  local values = U.split(v.values, ",")
+  if #values > 0 then
+    req.values = values
+  end
+  UI.save(SVC.ATTR .. "CreateAttribute", req, done, U.bind(attribute_created, req.name, after))
+end
+
 function M.new_attribute(ns, after)
   UI.dialog({
     title = "New Attribute",
@@ -23,22 +45,25 @@ function M.new_attribute(ns, after)
       { key = "rule", label = "Rule", kind = "enum", options = Store.RULES },
       { key = "values", label = "Values", placeholder = "secret, confidential, public" },
     },
-    on_submit = function(v, done)
-      local req = { namespaceId = v.namespace, name = U.trim(v.name), rule = v.rule }
-      local values = U.split(v.values, ",")
-      if #values > 0 then
-        req.values = values
-      end
-      UI.save(SVC.ATTR .. "CreateAttribute", req, done, function()
-        ttt.notify("Created attribute " .. req.name)
-        UI.load(Store.attributes, true)
-        Api.refresh_counts()
-        if after then
-          after()
-        end
-      end)
-    end,
+    on_submit = U.bind(create_attribute, after),
   })
+end
+
+local function value_created(a, name, data)
+  if data.value then
+    Store.add_value(a, data.value)
+  end
+  ttt.notify("Created value " .. name)
+end
+
+local function create_value(a, v, done)
+  local name = U.trim(v.value)
+  UI.save(
+    SVC.ATTR .. "CreateAttributeValue",
+    { attributeId = a.id, value = name },
+    done,
+    U.bind(value_created, a, name)
+  )
 end
 
 function M.new_value(a)
@@ -48,15 +73,13 @@ function M.new_value(a)
     fields = {
       { key = "value", label = "Value", placeholder = "confidential", required = true },
     },
-    on_submit = function(v, done)
-      UI.save(SVC.ATTR .. "CreateAttributeValue", { attributeId = a.id, value = U.trim(v.value) }, done, function(data)
-        if data.value then
-          Store.add_value(a, data.value)
-        end
-        ttt.notify("Created value " .. U.trim(v.value))
-      end)
-    end,
+    on_submit = U.bind(create_value, a),
   })
+end
+
+local function attribute_deactivated(a)
+  a.active = false
+  reload()
 end
 
 function M.attribute(tab, cmd, a)
@@ -69,24 +92,23 @@ function M.attribute(tab, cmd, a)
   elseif cmd == "value" then
     M.new_value(a)
   elseif cmd == "labels" then
-    Policy.labels_dialog("Attribute " .. a.name, a, SVC.ATTR .. "UpdateAttribute", function()
-      UI.load(Store.attributes, true)
-    end)
+    Policy.labels_dialog("Attribute " .. a.name, a, SVC.ATTR .. "UpdateAttribute", reload)
   elseif cmd == "deactivate" then
     UI.confirm(
       "Deactivate attribute " .. a.fqn .. "? Its values are deactivated too.",
       SVC.ATTR .. "DeactivateAttribute",
       { id = a.id },
       "Deactivated " .. a.name,
-      function()
-        a.active = false
-        UI.load(Store.attributes, true)
-      end
+      U.bind(attribute_deactivated, a)
     )
   end
 end
 
-function M.value(tab, cmd, a, v)
+local function value_deactivated(v)
+  v.active = false
+end
+
+function M.value(tab, a, cmd, v)
   if not a then
     return
   end
@@ -105,9 +127,7 @@ function M.value(tab, cmd, a, v)
       SVC.ATTR .. "DeactivateAttributeValue",
       { id = v.id },
       "Deactivated " .. v.value,
-      function()
-        v.active = false
-      end
+      U.bind(value_deactivated, v)
     )
   end
 end

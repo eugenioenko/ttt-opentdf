@@ -22,9 +22,7 @@ S.lists = {}
 
 function S.redraw()
   for _, p in pairs(S.panels) do
-    pcall(function()
-      p:redraw()
-    end)
+    pcall(p.redraw, p)
     return
   end
 end

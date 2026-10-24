@@ -14,6 +14,36 @@ function M.field_options(f)
   return f.options or {}
 end
 
+local function shown(form, f)
+  return not f.show or f.show(form.vals)
+end
+
+local function finish(form, err)
+  form.busy = false
+  form.err = err
+  if not err and form.spec.on_done then
+    form.spec.on_done()
+  end
+  S.redraw()
+end
+
+local function submit(form)
+  if form.busy then
+    return
+  end
+  for _, f in ipairs(form.spec.fields) do
+    if shown(form, f) and f.required and U.trim(form.vals[f.key]) == "" then
+      form.err = f.label .. " is required"
+      S.redraw()
+      return
+    end
+  end
+  form.busy = true
+  form.err = nil
+  S.redraw()
+  form.spec.on_submit(form.vals, U.bind(finish, form))
+end
+
 function M.new_form(spec)
   local form = { spec = spec, vals = {}, err = nil, busy = false }
   for _, f in ipairs(spec.fields) do
@@ -26,37 +56,14 @@ function M.new_form(spec)
     end
     form.vals[f.key] = v or ""
   end
-  function form.submit()
-    if form.busy then
-      return
-    end
-    for _, f in ipairs(spec.fields) do
-      local shown = not f.show or f.show(form.vals)
-      if shown and f.required and U.trim(form.vals[f.key]) == "" then
-        form.err = f.label .. " is required"
-        S.redraw()
-        return
-      end
-    end
-    form.busy = true
-    form.err = nil
-    S.redraw()
-    spec.on_submit(form.vals, function(err)
-      form.busy = false
-      form.err = err
-      if not err and spec.on_done then
-        spec.on_done()
-      end
-      S.redraw()
-    end)
-  end
+  form.submit = U.bind(submit, form)
   return form
 end
 
 function M.form_height(form)
   local h = 2
   for _, f in ipairs(form.spec.fields) do
-    if not f.show or f.show(form.vals) then
+    if shown(form, f) then
       if f.kind == "multiline" then
         h = h + (f.rows or 6) + 2
       else
@@ -67,42 +74,50 @@ function M.form_height(form)
   return h
 end
 
+local function set_value(form, key, value)
+  form.vals[key] = value
+end
+
+local function pick_value(form, key, value)
+  form.vals[key] = value
+  S.redraw()
+end
+
+local function enum_field(form, f, b)
+  Inputs.dropdown(b, M.field_options(f), form.vals[f.key], U.bind(pick_value, form, f.key))
+end
+
 local function render_field(p, form, f, first)
   if f.kind == "enum" then
-    local options = M.field_options(f)
-    Layout.frame(p, f.label, function(b)
-      Inputs.dropdown(b, options, form.vals[f.key], function(value)
-        form.vals[f.key] = value
-        S.redraw()
-      end)
-    end)
+    Layout.frame(p, f.label, U.bind(enum_field, form, f))
   elseif f.kind == "readonly" then
     p:label({ text = f.label .. ": " .. tostring(form.vals[f.key]), style = "muted", border = true })
   else
-    local multiline = f.kind == "multiline"
+    local rows = f.kind == "multiline" and (f.rows or 6) or nil
     p:input({
       border = true,
       title = f.label,
       value = form.vals[f.key],
       placeholder = f.placeholder,
       password = f.password,
-      multiline = multiline,
-      min_rows = multiline and (f.rows or 6) or nil,
-      max_rows = multiline and (f.rows or 6) or nil,
+      multiline = rows ~= nil,
+      min_rows = rows,
+      max_rows = rows,
       autofocus = first,
-      on_change = function(text)
-        form.vals[f.key] = text
-      end,
-      on_submit = function()
-        form.submit()
-      end,
+      on_change = U.bind(set_value, form, f.key),
+      on_submit = form.submit,
     })
   end
 end
 
+local function buttons(form, on_cancel, h)
+  h:button({ label = "Cancel", on_click = on_cancel })
+  h:button({ label = form.spec.submit or "Save", disabled = form.busy, on_click = form.submit })
+end
+
 function M.render_form(p, form, on_cancel)
   for i, f in ipairs(form.spec.fields) do
-    if not f.show or f.show(form.vals) then
+    if shown(form, f) then
       render_field(p, form, f, i == 1)
     end
   end
@@ -113,15 +128,7 @@ function M.render_form(p, form, on_cancel)
     text = "Saving…"
   end
   p:label({ text = text, style = style, padding_left = 1 })
-  p:hstack({
-    height = 1,
-    gap = 1,
-    align = "right",
-    render = function(h)
-      h:button({ label = "Cancel", on_click = on_cancel })
-      h:button({ label = form.spec.submit or "Save", disabled = form.busy, on_click = form.submit })
-    end,
-  })
+  p:hstack({ height = 1, gap = 1, align = "right", render = U.bind(buttons, form, on_cancel) })
 end
 
 return M

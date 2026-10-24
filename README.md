@@ -67,6 +67,8 @@ src/
 
 A feature exposes `{ id, root }` from its `init.lua`; `Router.show` opens a detail page in its own tab and `Router.push` adds a step, like a form, inside the current one. Its `store` holds the lists and state, `commands` the dialogs and API calls, and each `*_page.lua` renders one page. When two modules need each other (commands that open a detail page, a detail page that runs commands), require the second one inside the function that uses it: a `require` cycle at load time is an error.
 
+Pages and components are built from named local functions instead of nested inline closures, so `M.page` reads as an outline. Callbacks are wired with `U.bind(fn, ...)`, which passes its bound arguments first and the caller's after them: `on_click = U.bind(Commands.new_value, a)`, `render = U.bind(render, page, a)`. Functions used as callbacks therefore take their context first and the panel or event arguments last.
+
 Runtime errors point at lines in `init.lua`. Each module starts with a `-- src/…` comment there, so search upward from the line to find the source file.
 
 Format with `stylua src` (settings in `.stylua.toml`).

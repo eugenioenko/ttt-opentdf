@@ -32,20 +32,28 @@ local function request(v, id)
   return req
 end
 
+local function server_created(req)
+  ttt.notify("Created key access server " .. (req.name or req.uri))
+  UI.load(Store.servers, true)
+  Api.refresh_counts()
+end
+
+local function create_server(v, done)
+  local req = request(v)
+  UI.save(SVC.KAS .. "CreateKeyAccessServer", req, done, U.bind(server_created, req))
+end
+
 function M.new_server()
-  UI.dialog({
-    title = "New Key Access Server",
-    submit = "Create",
-    fields = fields(nil),
-    on_submit = function(v, done)
-      local req = request(v)
-      UI.save(SVC.KAS .. "CreateKeyAccessServer", req, done, function()
-        ttt.notify("Created key access server " .. (req.name or req.uri))
-        UI.load(Store.servers, true)
-        Api.refresh_counts()
-      end)
-    end,
-  })
+  UI.dialog({ title = "New Key Access Server", submit = "Create", fields = fields(nil), on_submit = create_server })
+end
+
+local function server_updated(k, req)
+  k.name, k.uri, k.sourceType = req.name, req.uri, req.sourceType
+end
+
+local function update_server(k, v, done)
+  local req = request(v, k.id)
+  UI.save(SVC.KAS .. "UpdateKeyAccessServer", req, done, U.bind(server_updated, k, req))
 end
 
 function M.edit_server(k)
@@ -53,13 +61,14 @@ function M.edit_server(k)
     title = "Edit Key Access Server",
     submit = "Save",
     fields = fields(k),
-    on_submit = function(v, done)
-      local req = request(v, k.id)
-      UI.save(SVC.KAS .. "UpdateKeyAccessServer", req, done, function()
-        k.name, k.uri, k.sourceType = req.name, req.uri, req.sourceType
-      end)
-    end,
+    on_submit = U.bind(update_server, k),
   })
+end
+
+local function server_deleted(k)
+  Router.close_page("kas:" .. k.id)
+  UI.load(Store.servers, true)
+  Api.refresh_counts()
 end
 
 function M.server(tab, cmd, k)
@@ -79,11 +88,7 @@ function M.server(tab, cmd, k)
       SVC.KAS .. "DeleteKeyAccessServer",
       { id = k.id },
       "Deleted " .. (k.name or k.uri),
-      function()
-        Router.close_page("kas:" .. k.id)
-        UI.load(Store.servers, true)
-        Api.refresh_counts()
-      end
+      U.bind(server_deleted, k)
     )
   end
 end
@@ -113,9 +118,7 @@ function M.key(tab, cmd, kk)
       SVC.KAS .. "SetBaseKey",
       { id = kk.key.id },
       "Base key is now " .. kk.key.keyId,
-      function()
-        Api.load_base_key()
-      end
+      Api.load_base_key
     )
   end
 end

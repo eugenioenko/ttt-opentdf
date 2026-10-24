@@ -32,6 +32,15 @@ function M.add_resource(fqn)
   S.redraw()
 end
 
+local function together_result(count, done, err, data)
+  if err then
+    return done(err)
+  end
+  local d = data.decision or {}
+  local label = count .. " value" .. (count == 1 and "" or "s") .. " together"
+  done(nil, { { label = label, decision = d.decision } }, d.requiredObligations)
+end
+
 local function decide_together(st, action, done)
   local fqns = {}
   for i, f in ipairs(st.resources) do
@@ -41,17 +50,22 @@ local function decide_together(st, action, done)
     entityIdentifier = Entity.identifier(st.entity),
     action = { name = action },
     resource = { ephemeralId = "resource", attributeValues = { fqns = fqns } },
-  }, function(err, data)
-    if err then
-      return done(err)
+  }, U.bind(together_result, #fqns, done))
+end
+
+local function each_result(fqns, done, err, data)
+  if err then
+    return done(err)
+  end
+  local out, obligations = {}, {}
+  for _, d in ipairs(data.resourceDecisions or {}) do
+    local i = tonumber((d.ephemeralResourceId or ""):sub(2))
+    out[#out + 1] = { label = fqns[i] or d.ephemeralResourceId, decision = d.decision }
+    for _, o in ipairs(d.requiredObligations or {}) do
+      obligations[#obligations + 1] = o
     end
-    local d = data.decision or {}
-    done(
-      nil,
-      { { label = #fqns .. " value" .. (#fqns == 1 and "" or "s") .. " together", decision = d.decision } },
-      d.requiredObligations
-    )
-  end)
+  end
+  done(nil, out, obligations)
 end
 
 local function decide_each(st, action, done)
@@ -63,20 +77,18 @@ local function decide_each(st, action, done)
     entityIdentifier = Entity.identifier(st.entity),
     action = { name = action },
     resources = resources,
-  }, function(err, data)
-    if err then
-      return done(err)
-    end
-    local out, obligations = {}, {}
-    for _, d in ipairs(data.resourceDecisions or {}) do
-      local i = tonumber((d.ephemeralResourceId or ""):sub(2))
-      out[#out + 1] = { label = st.resources[i] or d.ephemeralResourceId, decision = d.decision }
-      for _, o in ipairs(d.requiredObligations or {}) do
-        obligations[#obligations + 1] = o
-      end
-    end
-    done(nil, out, obligations)
-  end)
+  }, U.bind(each_result, st.resources, done))
+end
+
+local function decided(st, label, action, err, decisions, obligations)
+  st.busy = false
+  if err then
+    st.err = err
+    st.result = nil
+  else
+    st.result = { entity = label, action = action, decisions = decisions, obligations = obligations or {} }
+  end
+  S.redraw()
 end
 
 function M.run()
@@ -96,17 +108,7 @@ function M.run()
   if action == "" then
     action = "read"
   end
-  local label = Entity.label(st.entity)
-  local done = function(err, decisions, obligations)
-    st.busy = false
-    if err then
-      st.err = err
-      st.result = nil
-    else
-      st.result = { entity = label, action = action, decisions = decisions, obligations = obligations or {} }
-    end
-    S.redraw()
-  end
+  local done = U.bind(decided, st, Entity.label(st.entity), action)
   if st.each then
     decide_each(st, action, done)
   else

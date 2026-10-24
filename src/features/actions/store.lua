@@ -16,25 +16,20 @@ function M.extract(data)
   return out
 end
 
-M.list = UI.list("actions", {
-  method = SVC.ACT .. "ListActions",
-  request = function(lv)
-    if lv.namespace and lv.namespace ~= "" then
-      return { namespaceId = lv.namespace }
-    end
-    return {}
-  end,
-  extract = M.extract,
-})
+local function request(lv)
+  if lv.namespace and lv.namespace ~= "" then
+    return { namespaceId = lv.namespace }
+  end
+  return {}
+end
+
+M.list = UI.list("actions", { method = SVC.ACT .. "ListActions", request = request, extract = M.extract })
 
 function M.namespace_list(ns_id)
-  return UI.sub_list("ns-actions:" .. ns_id, {
-    method = SVC.ACT .. "ListActions",
-    request = function()
-      return { namespaceId = ns_id }
-    end,
-    extract = M.extract,
-  })
+  local lv =
+    UI.sub_list("ns-actions:" .. ns_id, { method = SVC.ACT .. "ListActions", request = request, extract = M.extract })
+  lv.namespace = ns_id
+  return lv
 end
 
 function M.style(a)
