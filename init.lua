@@ -156,6 +156,22 @@ function U.option_label(options, value)
   return "Select…"
 end
 
+function U.created(x)
+  return U.date(x.metadata and x.metadata.createdAt)
+end
+
+function U.updated(x)
+  return U.date(x.metadata and x.metadata.updatedAt)
+end
+
+function U.rule(a)
+  return U.human(a.rule, "ATTRIBUTE_RULE_TYPE_ENUM_")
+end
+
+function U.inactive_style(x)
+  return x.active == false and "muted" or "default"
+end
+
 function U.option_entries(options, value)
   local entries = {}
   for i, o in ipairs(options) do
@@ -411,6 +427,7 @@ function UI.load(lv, keep)
   local spec = lv.spec
   if spec.client then
     UI.slice(lv)
+    S.redraw()
     return
   end
   lv.loading = true
@@ -475,24 +492,8 @@ function UI.ensure(lv)
   end
 end
 
-function UI.reload(lv, keep)
-  if lv.spec.client then
-    UI.slice(lv)
-    S.redraw()
-    return
-  end
-  UI.load(lv, keep)
-end
-
 function UI.selected(lv)
   return lv.items[lv.sel]
-end
-
-function UI.status_text(lv)
-  if lv.err then
-    return "✕ " .. lv.err, "danger"
-  end
-  return "", "muted"
 end
 
 function UI.empty_text(lv, noun, empty)
@@ -508,6 +509,14 @@ end
 -- The widget sequence stays the same whatever the list holds, so reconciliation
 -- keeps the table focused while pages load.
 function UI.table(p, lv, opts)
+  if opts.frame then
+    local title = opts.frame
+    opts.frame = nil
+    UI.frame(p, title, function(b)
+      UI.table(b, lv, opts)
+    end, opts.frame_opts)
+    return
+  end
   local rows, styles = {}, {}
   for i, item in ipairs(lv.items) do
     rows[i] = opts.row(item)
@@ -542,13 +551,11 @@ function UI.table(p, lv, opts)
       end
     end,
   })
-  local text, style = UI.status_text(lv)
   p:divider()
   p:hstack({
     height = 1,
-    gap = 2,
+    align = "center",
     render = function(h)
-      h:label({ text = text, style = style, padding_left = 1 })
       h:pager({
         offset = lv.offset,
         limit = PAGE,
@@ -556,37 +563,104 @@ function UI.table(p, lv, opts)
         on_change = function(offset)
           lv.offset = offset
           lv.sel = 1
-          UI.reload(lv)
+          UI.load(lv)
           if opts.on_page then
             opts.on_page()
           end
         end,
       })
-      h:label({ text = "" })
     end,
   })
+  if lv.err then
+    p:label({ text = "✕ " .. lv.err, style = "danger", padding_left = 1 })
+  end
 end
 
+function UI.frame(p, title, render, opts)
+  local box = { border = true, title = title, render = render }
+  for k, v in pairs(opts or {}) do
+    box[k] = v
+  end
+  p:box(box)
+end
+
+-- on_search replaces the reload, for client lists that refilter themselves.
 function UI.search(h, lv, placeholder, on_search)
+  lv.on_search = on_search
+  lv.search_later = lv.search_later
+    or ttt.debounce(250, function()
+      lv.offset = 0
+      if lv.on_search then
+        lv.on_search()
+        S.redraw()
+      else
+        UI.load(lv)
+      end
+    end)
   h:input({
     placeholder = placeholder or "Search…",
     prefix = "⌕ ",
     value = lv.search,
     on_change = function(text)
       lv.search = text
-      if lv.timer then
-        ttt.clear_timeout(lv.timer)
-      end
-      lv.timer = ttt.set_timeout(250, function()
-        lv.timer = nil
-        lv.offset = 0
-        UI.load(lv)
-        if on_search then
-          on_search()
-        end
-      end)
+      lv.search_later()
     end,
   })
+end
+
+function UI.checkbox(h, label, checked, on_change, opts)
+  local box = {
+    width = #label + 5,
+    render = function(b)
+      b:checkbox({ label = label, checked = checked, on_change = on_change })
+    end,
+  }
+  for k, v in pairs(opts or {}) do
+    box[k] = v
+  end
+  h:box(box)
+end
+
+function UI.button_box(h, label, on_click, disabled)
+  h:box({
+    padding_top = 1,
+    width = #label + 2,
+    render = function(b)
+      b:button({ label = label, on_click = on_click, disabled = disabled })
+    end,
+  })
+end
+
+function UI.dropdown(h, options, value, on_pick)
+  h:dropdown({
+    label = U.option_label(options, value) .. " ▾",
+    entries = U.option_entries(options, value),
+    on_menu = on_pick,
+  })
+end
+
+function UI.filter(h, lv, field, options)
+  UI.dropdown(h, options, lv[field] or "", function(value)
+    lv[field] = value
+    lv.offset = 0
+    UI.load(lv)
+  end)
+end
+
+function UI.refresh_button(h, lv, also)
+  h:button({
+    label = "Refresh",
+    on_click = function()
+      UI.load(lv, true)
+      if also then
+        also()
+      end
+    end,
+  })
+end
+
+function UI.toolbar(p, render, margin_top)
+  p:hstack({ height = 1, gap = 1, margin_top = margin_top == nil and 1 or margin_top, render = render })
 end
 
 UI.STATES = {
@@ -595,28 +669,20 @@ UI.STATES = {
   { label = "Any state", value = "ACTIVE_STATE_ENUM_ANY" },
 }
 
-function UI.state_dropdown(h, lv)
-  h:dropdown({
-    label = U.option_label(UI.STATES, lv.state) .. " ▾",
-    entries = U.option_entries(UI.STATES, lv.state),
-    on_menu = function(value)
-      lv.state = value
-      lv.offset = 0
-      UI.load(lv)
-    end,
-  })
+function UI.with_all(label, options)
+  local out = { { label = label, value = "" } }
+  for _, o in ipairs(options) do
+    out[#out + 1] = o
+  end
+  return out
 end
 
-function UI.namespace_dropdown(h, current, on_pick)
-  local options = { { label = "All namespaces", value = "" } }
-  for _, n in ipairs(S.namespaces) do
-    options[#options + 1] = n
-  end
-  h:dropdown({
-    label = U.option_label(options, current or "") .. " ▾",
-    entries = U.option_entries(options, current or ""),
-    on_menu = on_pick,
-  })
+function UI.state_filter(h, lv)
+  UI.filter(h, lv, "state", UI.STATES)
+end
+
+function UI.namespace_filter(h, lv)
+  UI.filter(h, lv, "namespace", UI.with_all("All namespaces", S.namespaces))
 end
 
 -- Forms ----------------------------------------------------------------------
@@ -686,20 +752,12 @@ function UI.render_form(p, form, on_cancel)
     if not f.show or f.show(form.vals) then
       if f.kind == "enum" then
         local options = UI.field_options(f)
-        p:box({
-          border = true,
-          title = f.label,
-          render = function(b)
-            b:dropdown({
-              label = U.option_label(options, form.vals[f.key]) .. " ▾",
-              entries = U.option_entries(options, form.vals[f.key]),
-              on_menu = function(value)
-                form.vals[f.key] = value
-                S.redraw()
-              end,
-            })
-          end,
-        })
+        UI.frame(p, f.label, function(b)
+          UI.dropdown(b, options, form.vals[f.key], function(value)
+            form.vals[f.key] = value
+            S.redraw()
+          end)
+        end)
       elseif f.kind == "readonly" then
         p:label({ text = f.label .. ": " .. tostring(form.vals[f.key]), style = "muted", border = true })
       else
@@ -734,33 +792,48 @@ function UI.render_form(p, form, on_cancel)
   p:hstack({
     height = 1,
     gap = 1,
+    align = "right",
     render = function(h)
-      h:label({ text = "" })
       h:button({ label = "Cancel", on_click = on_cancel })
       h:button({ label = form.spec.submit or "Save", disabled = form.busy, on_click = form.submit })
     end,
   })
 end
 
-function UI.dialog(spec)
-  local form = UI.new_form(spec)
-  spec.on_done = function()
-    ttt.close_dialog()
-  end
+function UI.open_dialog(title, width, height, render)
   ttt.open_dialog({
-    title = spec.title,
-    width = spec.width or 64,
-    height = UI.form_height(form),
+    title = title,
+    width = width,
+    height = height,
     render = function(p)
       S.panels.dialog = p
-      UI.render_form(p, form, function()
-        ttt.close_dialog()
-      end)
+      render(p)
     end,
     on_close = function()
       S.panels.dialog = nil
     end,
   })
+end
+
+function UI.dialog(spec)
+  local form = UI.new_form(spec)
+  spec.on_done = ttt.close_dialog
+  UI.open_dialog(spec.title, spec.width or 64, UI.form_height(form), function(p)
+    UI.render_form(p, form, ttt.close_dialog)
+  end)
+end
+
+-- Form submits: an error stays in the form, success runs after and closes it.
+function UI.save(path, req, done, after)
+  Api.call(path, req, function(err, data)
+    if err then
+      return done(err)
+    end
+    if after then
+      after(data)
+    end
+    done()
+  end)
 end
 
 function UI.confirm(message, path, req, done_message, after)
@@ -799,9 +872,12 @@ function UI.not_connected(p)
     render = function(h)
       h:button({ label = "Connection…", on_click = V.connection_dialog })
       if S.configured() then
-        h:button({ label = "Retry", on_click = function()
-          Api.connect()
-        end })
+        h:button({
+          label = "Retry",
+          on_click = function()
+            Api.connect()
+          end,
+        })
       end
     end,
   })
@@ -810,14 +886,27 @@ end
 -- Tabs -----------------------------------------------------------------------
 
 V.tabs = {}
-V.titles = {
-  namespaces = "Namespaces",
-  attributes = "Attributes",
-  actions = "Actions",
-  kas = "KAS & Keys",
-  entitlements = "Entitlements",
-  decision = "Decision",
+V.NAV = {
+  {
+    title = "POLICY",
+    items = {
+      { id = "namespaces", label = "Namespaces", count = true },
+      { id = "attributes", label = "Attributes", count = true },
+      { id = "actions", label = "Actions", count = true },
+    },
+  },
+  { title = "KEYS", items = { { id = "kas", label = "KAS & Keys", count = true } } },
+  {
+    title = "AUTHORIZATION",
+    items = { { id = "entitlements", label = "Entitlements" }, { id = "decision", label = "Decision" } },
+  },
 }
+V.titles = {}
+for _, section in ipairs(V.NAV) do
+  for _, item in ipairs(section.items) do
+    V.titles[item.id] = item.label
+  end
+end
 
 function V.push(tab, page)
   tab.stack[#tab.stack + 1] = page
@@ -881,18 +970,20 @@ function V.render(tab, p)
     gap = 1,
     render = function(h)
       if #tab.stack > 1 then
-        h:button({ label = "‹ Back", on_click = function()
-          V.back(tab)
-        end })
+        h:button({
+          label = "‹ Back",
+          on_click = function()
+            V.back(tab)
+          end,
+        })
       end
       h:label({ text = table.concat(crumbs, "  ›  "), style = "bold", padding_left = #tab.stack > 1 and 0 or 1 })
+      if page.actions then
+        page.actions(h, tab)
+      end
     end,
   })
   page.render(p, tab)
-end
-
-function V.toolbar(p, render)
-  p:hstack({ height = 1, gap = 1, margin_top = 1, render = render })
 end
 
 -- Namespaces -----------------------------------------------------------------
@@ -911,18 +1002,19 @@ V.ns = UI.list("namespaces", {
 function V.ns_root()
   return {
     title = "Namespaces",
+    actions = function(h)
+      h:button({ label = "New", on_click = V.ns_new })
+      UI.refresh_button(h, V.ns)
+    end,
     render = function(p, tab)
       local lv = V.ns
       UI.ensure(lv)
-      V.toolbar(p, function(h)
+      UI.toolbar(p, function(h)
         UI.search(h, lv, "Search namespaces…")
-        UI.state_dropdown(h, lv)
-        h:button({ label = "+ New", on_click = V.ns_new })
-        h:button({ label = "Refresh", on_click = function()
-          UI.load(lv, true)
-        end })
+        UI.state_filter(h, lv)
       end)
       UI.table(p, lv, {
+        frame = "Namespaces",
         noun = "namespaces",
         columns = {
           { label = "Name" },
@@ -931,11 +1023,9 @@ function V.ns_root()
           { label = "Created", width = 16 },
         },
         row = function(n)
-          return { n.name, U.active(n.active), U.labels(n.metadata), U.date(n.metadata and n.metadata.createdAt) }
+          return { n.name, U.active(n.active), U.labels(n.metadata), U.created(n) }
         end,
-        style = function(n)
-          return n.active == false and "muted" or "default"
-        end,
+        style = U.inactive_style,
         on_open = function(n)
           V.push(tab, V.ns_detail(n))
         end,
@@ -968,16 +1058,21 @@ function V.ns_command(tab, cmd, n)
       UI.load(V.ns, true)
     end)
   elseif cmd == "deactivate" then
-    UI.confirm("Deactivate namespace " .. n.name .. "? Its attributes and values are deactivated too.",
-      SVC.NS .. "DeactivateNamespace", { id = n.id }, "Deactivated " .. n.name, function()
+    UI.confirm(
+      "Deactivate namespace " .. n.name .. "? Its attributes and values are deactivated too.",
+      SVC.NS .. "DeactivateNamespace",
+      { id = n.id },
+      "Deactivated " .. n.name,
+      function()
         n.active = false
         UI.load(V.ns, true)
         Api.refresh_counts()
-      end)
+      end
+    )
   elseif cmd == "attributes" then
-    V.attr_for_namespace(n.id)
+    V.open_for_namespace("attributes", V.attr, n.id)
   elseif cmd == "actions" then
-    V.actions_for_namespace(n.id)
+    V.open_for_namespace("actions", V.act, n.id)
   end
 end
 
@@ -995,11 +1090,7 @@ function V.ns_new()
       if next(labels) then
         req.metadata = { labels = labels }
       end
-      Api.call(SVC.NS .. "CreateNamespace", req, function(err)
-        if err then
-          return done(err)
-        end
-        done()
+      UI.save(SVC.NS .. "CreateNamespace", req, done, function()
         ttt.notify("Created namespace " .. req.name)
         UI.load(V.ns, true)
         Api.refresh_counts()
@@ -1018,23 +1109,41 @@ function V.labels_dialog(what, item, path, after)
     },
     on_submit = function(v, done)
       local labels = U.parse_labels(v.labels)
-      Api.call(path, {
-        id = item.id,
-        metadata = { labels = labels },
-        metadataUpdateBehavior = "METADATA_UPDATE_ENUM_REPLACE",
-      }, function(err)
-        if err then
-          return done(err)
+      UI.save(
+        path,
+        {
+          id = item.id,
+          metadata = { labels = labels },
+          metadataUpdateBehavior = "METADATA_UPDATE_ENUM_REPLACE",
+        },
+        done,
+        function()
+          item.metadata = item.metadata or {}
+          item.metadata.labels = labels
+          if after then
+            after()
+          end
         end
-        item.metadata = item.metadata or {}
-        item.metadata.labels = labels
-        done()
-        if after then
-          after()
-        end
-      end)
+      )
     end,
   })
+end
+
+function V.policy_actions(h, item, command)
+  h:button({
+    label = "Labels",
+    on_click = function()
+      command("labels")
+    end,
+  })
+  if item.active ~= false then
+    h:button({
+      label = "Deactivate",
+      on_click = function()
+        command("deactivate")
+      end,
+    })
+  end
 end
 
 function V.kv(entries)
@@ -1082,6 +1191,33 @@ function V.ns_detail(n)
     end,
     extract = V.act.spec.extract,
   })
+  page.actions = function(h, tab)
+    if page.tab == "attributes" then
+      h:button({
+        label = "New",
+        on_click = function()
+          V.attr_new(n.id, function()
+            UI.load(attrs, true)
+          end)
+        end,
+      })
+      UI.refresh_button(h, attrs)
+    elseif page.tab == "actions" then
+      h:button({
+        label = "New",
+        on_click = function()
+          V.act_new(n.id, function()
+            UI.load(acts, true)
+          end)
+        end,
+      })
+      UI.refresh_button(h, acts)
+    else
+      V.policy_actions(h, n, function(cmd)
+        V.ns_command(tab, cmd, n)
+      end)
+    end
+  end
   page.render = function(p, tab)
     local current = V.tab_strip(p, page, {
       { id = "details", label = "Details" },
@@ -1090,16 +1226,12 @@ function V.ns_detail(n)
     })
     if current == "attributes" then
       UI.ensure(attrs)
-      V.toolbar(p, function(h)
+      UI.toolbar(p, function(h)
         UI.search(h, attrs, "Search attributes in " .. n.name .. "…")
-        UI.state_dropdown(h, attrs)
-        h:button({ label = "+ New Attribute", on_click = function()
-          V.attr_new(n.id, function()
-            UI.load(attrs, true)
-          end)
-        end })
+        UI.state_filter(h, attrs)
       end)
       UI.table(p, attrs, {
+        frame = "Attributes",
         noun = "attributes",
         columns = {
           { label = "Name" },
@@ -1108,11 +1240,9 @@ function V.ns_detail(n)
           { label = "Status", width = 9 },
         },
         row = function(a)
-          return { a.name, U.human(a.rule, "ATTRIBUTE_RULE_TYPE_ENUM_"), tostring(#(a.values or {})), U.active(a.active) }
+          return { a.name, U.rule(a), tostring(#(a.values or {})), U.active(a.active) }
         end,
-        style = function(a)
-          return a.active == false and "muted" or "default"
-        end,
+        style = U.inactive_style,
         on_open = function(a)
           V.push(tab, V.attr_detail(a))
         end,
@@ -1121,18 +1251,13 @@ function V.ns_detail(n)
     end
     if current == "actions" then
       UI.ensure(acts)
-      V.toolbar(p, function(h)
-        h:button({ label = "+ New Action", on_click = function()
-          V.act_new(n.id, function()
-            UI.load(acts, true)
-          end)
-        end })
-      end)
       UI.table(p, acts, {
+        frame = "Actions",
+        frame_opts = { margin_top = 1 },
         noun = "actions",
         columns = { { label = "Name" }, { label = "Type", width = 9 }, { label = "Created", width = 16 } },
         row = function(a)
-          return { a.name, a.kind, U.date(a.metadata and a.metadata.createdAt) }
+          return { a.name, a.kind, U.created(a) }
         end,
         style = function(a)
           return a.kind == "Standard" and "muted" or "default"
@@ -1149,19 +1274,9 @@ function V.ns_detail(n)
       { "Status", U.active(n.active) },
       { "Labels", U.labels(n.metadata) },
       { "ID", n.id },
-      { "Created", U.date(n.metadata and n.metadata.createdAt) },
-      { "Updated", U.date(n.metadata and n.metadata.updatedAt) },
+      { "Created", U.created(n) },
+      { "Updated", U.updated(n) },
     }))
-    V.toolbar(p, function(h)
-      h:button({ label = "Edit Labels", on_click = function()
-        V.ns_command(tab, "labels", n)
-      end })
-      if n.active ~= false then
-        h:button({ label = "Deactivate", on_click = function()
-          V.ns_command(tab, "deactivate", n)
-        end })
-      end
-    end)
   end
   return page
 end
@@ -1226,117 +1341,112 @@ function V.values_follow()
   UI.slice(V.values)
 end
 
-function V.values_filters(p, lv, refilter)
-  p:hstack({
-    height = 1,
-    gap = 1,
-    render = function(h)
-      UI.search(h, lv, "Filter values…", refilter)
-      h:dropdown({
-        label = U.option_label(V.VALUE_STATES, lv.vstate or "") .. " ▾",
-        entries = U.option_entries(V.VALUE_STATES, lv.vstate or ""),
-        on_menu = function(value)
-          lv.vstate = value
-          lv.offset = 0
-          refilter()
-          S.redraw()
-        end,
-      })
-    end,
-  })
+function V.values_filters(p, lv, refilter, margin_top)
+  UI.toolbar(p, function(h)
+    UI.search(h, lv, "Filter values…", refilter)
+    UI.dropdown(h, V.VALUE_STATES, lv.vstate or "", function(value)
+      lv.vstate = value
+      lv.offset = 0
+      refilter()
+      S.redraw()
+    end)
+  end, margin_top or 0)
 end
 
-function V.attr_for_namespace(ns_id)
-  V.attr.namespace = ns_id
-  V.attr.offset = 0
-  V.attr.loaded = false
-  local tab = V.open("attributes")
-  V.reset(tab)
+function V.open_for_namespace(id, lv, ns_id)
+  lv.namespace = ns_id
+  lv.offset = 0
+  lv.loaded = false
+  V.reset(V.open(id))
   S.redraw()
 end
 
 function V.attr_root()
   return {
     title = "Attributes",
+    actions = function(h)
+      h:button({
+        label = "New",
+        on_click = function()
+          V.attr_new()
+        end,
+      })
+      UI.refresh_button(h, V.attr)
+    end,
     render = function(p, tab)
       local lv = V.attr
       UI.ensure(lv)
-      V.toolbar(p, function(h)
-        UI.search(h, lv, "Search attributes…")
-        UI.namespace_dropdown(h, lv.namespace, function(value)
-          lv.namespace = value
-          lv.offset = 0
-          UI.load(lv)
-        end)
-        UI.state_dropdown(h, lv)
-        h:button({ label = "+ New Attribute", on_click = function()
-          V.attr_new()
-        end })
-        h:button({ label = "Refresh", on_click = function()
-          UI.load(lv, true)
-        end })
-      end)
       local w = p:size()
       local left = math.max(36, math.floor(w * 0.5))
       local a = UI.selected(lv)
       p:hstack({
+        height = 1,
+        margin_top = 1,
         render = function(h)
           h:box({
-            border = true,
-            title = "Attributes",
             width = left,
+            padding_right = 1,
             render = function(b)
-              UI.table(b, lv, {
-                noun = "attributes",
-                columns = {
-                  { label = "Attribute" },
-                  { label = "Rule", width = 9 },
-                  { label = "Values", width = 6, align = "right" },
-                },
-                row = function(item)
-                  local ns = item.namespace and item.namespace.name or ""
-                  return { ns .. "/" .. item.name, U.human(item.rule, "ATTRIBUTE_RULE_TYPE_ENUM_"), tostring(#(item.values or {})) }
-                end,
-                style = function(item)
-                  return item.active == false and "muted" or "default"
-                end,
-                on_move = function()
-                  V.values_follow()
-                end,
-                on_page = V.values_follow,
-                on_open = function(item)
-                  V.push(tab, V.attr_detail(item))
-                end,
-                keys = { n = "new", v = "value", d = "deactivate", e = "labels" },
-                menu = {
-                  { label = "Open", command = "open" },
-                  { label = "New Value", command = "value" },
-                  { label = "Edit Labels", command = "labels" },
-                  { label = "Deactivate", command = "deactivate" },
-                },
-                on_command = function(cmd, item)
-                  V.attr_command(tab, cmd, item)
-                end,
-              })
+              UI.toolbar(b, function(t)
+                UI.search(t, lv, "Search attributes…")
+                UI.namespace_filter(t, lv)
+                UI.state_filter(t, lv)
+              end, 0)
             end,
           })
           h:box({
-            border = true,
-            title = a and ("Values · " .. a.fqn) or "Values",
             render = function(b)
-              V.values_table(b, tab, a)
+              V.values_filters(b, V.values, V.values_follow)
             end,
           })
+        end,
+      })
+      p:hstack({
+        render = function(h)
+          UI.frame(h, "Attributes", function(b)
+            UI.table(b, lv, {
+              noun = "attributes",
+              columns = {
+                { label = "Attribute" },
+                { label = "Rule", width = 9 },
+                { label = "Values", width = 6, align = "right" },
+              },
+              row = function(item)
+                local ns = item.namespace and item.namespace.name or ""
+                return { ns .. "/" .. item.name, U.rule(item), tostring(#(item.values or {})) }
+              end,
+              style = U.inactive_style,
+              on_move = function()
+                V.values_follow()
+              end,
+              on_page = V.values_follow,
+              on_open = function(item)
+                V.push(tab, V.attr_detail(item))
+              end,
+              keys = { n = "new", v = "value", d = "deactivate", e = "labels" },
+              menu = {
+                { label = "Open", command = "open" },
+                { label = "New Value", command = "value" },
+                { label = "Edit Labels", command = "labels" },
+                { label = "Deactivate", command = "deactivate" },
+              },
+              on_command = function(cmd, item)
+                V.attr_command(tab, cmd, item)
+              end,
+            })
+          end, { width = left })
+          UI.frame(h, a and ("Values · " .. a.fqn) or "Values", function(b)
+            V.values_table(b, tab, a, V.values)
+          end)
         end,
       })
     end,
   }
 end
 
-function V.values_table(p, tab, a)
-  local lv = V.values
-  V.values_filters(p, lv, V.values_follow)
+function V.values_table(p, tab, a, lv, frame)
   UI.table(p, lv, {
+    frame = frame,
     noun = "values",
     columns = {
       { label = "Value" },
@@ -1346,9 +1456,7 @@ function V.values_table(p, tab, a)
     row = function(v)
       return { v.value, U.active(v.active), v.fqn or "" }
     end,
-    style = function(v)
-      return v.active == false and "muted" or "default"
-    end,
+    style = U.inactive_style,
     on_open = function(v)
       V.push(tab, V.value_detail(a, v))
     end,
@@ -1379,11 +1487,16 @@ function V.attr_command(tab, cmd, a)
       UI.load(V.attr, true)
     end)
   elseif cmd == "deactivate" then
-    UI.confirm("Deactivate attribute " .. a.fqn .. "? Its values are deactivated too.",
-      SVC.ATTR .. "DeactivateAttribute", { id = a.id }, "Deactivated " .. a.name, function()
+    UI.confirm(
+      "Deactivate attribute " .. a.fqn .. "? Its values are deactivated too.",
+      SVC.ATTR .. "DeactivateAttribute",
+      { id = a.id },
+      "Deactivated " .. a.name,
+      function()
         a.active = false
         UI.load(V.attr, true)
-      end)
+      end
+    )
   end
 end
 
@@ -1400,25 +1513,39 @@ function V.value_command(tab, cmd, a, v)
   elseif cmd == "labels" then
     V.labels_dialog("Value " .. v.value, v, SVC.ATTR .. "UpdateAttributeValue", nil)
   elseif cmd == "deactivate" then
-    UI.confirm("Deactivate value " .. v.fqn .. "?", SVC.ATTR .. "DeactivateAttributeValue", { id = v.id },
-      "Deactivated " .. v.value, function()
+    UI.confirm(
+      "Deactivate value " .. v.fqn .. "?",
+      SVC.ATTR .. "DeactivateAttributeValue",
+      { id = v.id },
+      "Deactivated " .. v.value,
+      function()
         v.active = false
-      end)
+      end
+    )
   end
 end
 
-function V.attr_new(ns_override, after)
-  local ns = ns_override or V.attr.namespace
+function V.namespace_field(ns)
   if (not ns or ns == "") and S.namespaces[1] then
     ns = S.namespaces[1].value
   end
+  return {
+    key = "namespace",
+    label = "Namespace",
+    kind = "enum",
+    value = ns,
+    options = function()
+      return S.namespaces
+    end,
+  }
+end
+
+function V.attr_new(ns_override, after)
   UI.dialog({
     title = "New Attribute",
     submit = "Create",
     fields = {
-      { key = "namespace", label = "Namespace", kind = "enum", options = function()
-        return S.namespaces
-      end, value = ns },
+      V.namespace_field(ns_override or V.attr.namespace),
       { key = "name", label = "Name", placeholder = "classification", required = true },
       { key = "rule", label = "Rule", kind = "enum", options = V.RULES },
       { key = "values", label = "Values", placeholder = "secret, confidential, public" },
@@ -1429,11 +1556,7 @@ function V.attr_new(ns_override, after)
       if #values > 0 then
         req.values = values
       end
-      Api.call(SVC.ATTR .. "CreateAttribute", req, function(err)
-        if err then
-          return done(err)
-        end
-        done()
+      UI.save(SVC.ATTR .. "CreateAttribute", req, done, function()
         ttt.notify("Created attribute " .. req.name)
         UI.load(V.attr, true)
         Api.refresh_counts()
@@ -1453,11 +1576,7 @@ function V.value_new(a)
       { key = "value", label = "Value", placeholder = "confidential", required = true },
     },
     on_submit = function(v, done)
-      Api.call(SVC.ATTR .. "CreateAttributeValue", { attributeId = a.id, value = U.trim(v.value) }, function(err, data)
-        if err then
-          return done(err)
-        end
-        done()
+      UI.save(SVC.ATTR .. "CreateAttributeValue", { attributeId = a.id, value = U.trim(v.value) }, done, function(data)
         if data.value then
           a.values = a.values or {}
           a.values[#a.values + 1] = data.value
@@ -1477,6 +1596,20 @@ end
 function V.attr_detail(a)
   local page = { title = a.fqn }
   local values = V.sub_list("attr-values:" .. a.id, { client = true })
+  page.actions = function(h, tab)
+    if page.tab == "values" then
+      h:button({
+        label = "New",
+        on_click = function()
+          V.value_new(a)
+        end,
+      })
+    else
+      V.policy_actions(h, a, function(cmd)
+        V.attr_command(tab, cmd, a)
+      end)
+    end
+  end
   page.render = function(p, tab)
     local current = V.tab_strip(p, page, {
       { id = "details", label = "Details" },
@@ -1488,53 +1621,22 @@ function V.attr_detail(a)
         UI.slice(values)
       end
       refilter()
-      V.toolbar(p, function(h)
-        h:button({ label = "+ New Value", on_click = function()
-          V.value_new(a)
-        end })
-      end)
-      V.values_filters(p, values, refilter)
-      UI.table(p, values, {
-        noun = "values",
-        columns = { { label = "Value" }, { label = "Status", width = 9 }, { label = "FQN" } },
-        row = function(v)
-          return { v.value, U.active(v.active), v.fqn or "" }
-        end,
-        style = function(v)
-          return v.active == false and "muted" or "default"
-        end,
-        on_open = function(v)
-          V.push(tab, V.value_detail(a, v))
-        end,
-        keys = { n = "new", d = "deactivate", e = "labels" },
-        on_command = function(cmd, v)
-          V.value_command(tab, cmd, a, v)
-        end,
-      })
+      V.values_filters(p, values, refilter, 1)
+      V.values_table(p, tab, a, values, "Values")
       return
     end
     p:keyvalue(V.kv({
       { "FQN", a.fqn },
       { "Namespace", a.namespace and a.namespace.name },
       { "Name", a.name },
-      { "Rule", U.human(a.rule, "ATTRIBUTE_RULE_TYPE_ENUM_") },
+      { "Rule", U.rule(a) },
       { "Status", U.active(a.active) },
       { "Values", tostring(#(a.values or {})) },
       { "Labels", U.labels(a.metadata) },
       { "ID", a.id },
-      { "Created", U.date(a.metadata and a.metadata.createdAt) },
-      { "Updated", U.date(a.metadata and a.metadata.updatedAt) },
+      { "Created", U.created(a) },
+      { "Updated", U.updated(a) },
     }))
-    V.toolbar(p, function(h)
-      h:button({ label = "Edit Labels", on_click = function()
-        V.attr_command(tab, "labels", a)
-      end })
-      if a.active ~= false then
-        h:button({ label = "Deactivate", on_click = function()
-          V.attr_command(tab, "deactivate", a)
-        end })
-      end
-    end)
   end
   return page
 end
@@ -1542,7 +1644,12 @@ end
 function V.value_detail(a, v)
   return {
     title = v.value,
-    render = function(p, tab)
+    actions = function(h, tab)
+      V.policy_actions(h, v, function(cmd)
+        V.value_command(tab, cmd, a, v)
+      end)
+    end,
+    render = function(p)
       p:keyvalue(V.kv({
         { "FQN", v.fqn },
         { "Attribute", a.fqn },
@@ -1551,16 +1658,6 @@ function V.value_detail(a, v)
         { "Labels", U.labels(v.metadata) },
         { "ID", v.id },
       }))
-      V.toolbar(p, function(h)
-        h:button({ label = "Edit Labels", on_click = function()
-          V.value_command(tab, "labels", a, v)
-        end })
-        if v.active ~= false then
-          h:button({ label = "Deactivate", on_click = function()
-            V.value_command(tab, "deactivate", a, v)
-          end })
-        end
-      end)
     end,
   }
 end
@@ -1589,35 +1686,26 @@ V.act = UI.list("actions", {
   end,
 })
 
-function V.actions_for_namespace(ns_id)
-  V.act.namespace = ns_id
-  V.act.offset = 0
-  V.act.loaded = false
-  local tab = V.open("actions")
-  V.reset(tab)
-  S.redraw()
-end
-
 function V.act_root()
   return {
     title = "Actions",
+    actions = function(h)
+      h:button({
+        label = "New",
+        on_click = function()
+          V.act_new()
+        end,
+      })
+      UI.refresh_button(h, V.act)
+    end,
     render = function(p, tab)
       local lv = V.act
       UI.ensure(lv)
-      V.toolbar(p, function(h)
-        UI.namespace_dropdown(h, lv.namespace, function(value)
-          lv.namespace = value
-          lv.offset = 0
-          UI.load(lv)
-        end)
-        h:button({ label = "+ New Action", on_click = function()
-          V.act_new()
-        end })
-        h:button({ label = "Refresh", on_click = function()
-          UI.load(lv, true)
-        end })
+      UI.toolbar(p, function(h)
+        UI.namespace_filter(h, lv)
       end)
       UI.table(p, lv, {
+        frame = "Actions",
         noun = "actions",
         columns = {
           { label = "Name" },
@@ -1626,7 +1714,7 @@ function V.act_root()
           { label = "Created", width = 16 },
         },
         row = function(a)
-          return { a.name, a.kind, a.namespace and a.namespace.name or "", U.date(a.metadata and a.metadata.createdAt) }
+          return { a.name, a.kind, a.namespace and a.namespace.name or "", U.created(a) }
         end,
         style = function(a)
           return a.kind == "Standard" and "muted" or "default"
@@ -1660,44 +1748,35 @@ function V.act_command(_, cmd, a)
       submit = "Save",
       fields = { { key = "name", label = "Name", value = a.name, required = true } },
       on_submit = function(v, done)
-        Api.call(SVC.ACT .. "UpdateAction", { id = a.id, name = U.trim(v.name) }, function(err)
-          if err then
-            return done(err)
-          end
+        UI.save(SVC.ACT .. "UpdateAction", { id = a.id, name = U.trim(v.name) }, done, function()
           a.name = U.trim(v.name)
-          done()
         end)
       end,
     })
   elseif cmd == "delete" then
-    UI.confirm("Delete action " .. a.name .. "?", SVC.ACT .. "DeleteAction", { id = a.id }, "Deleted " .. a.name,
+    UI.confirm(
+      "Delete action " .. a.name .. "?",
+      SVC.ACT .. "DeleteAction",
+      { id = a.id },
+      "Deleted " .. a.name,
       function()
         UI.load(V.act, true)
         Api.refresh_counts()
-      end)
+      end
+    )
   end
 end
 
 function V.act_new(ns_override, after)
-  local ns = ns_override or V.act.namespace
-  if (not ns or ns == "") and S.namespaces[1] then
-    ns = S.namespaces[1].value
-  end
   UI.dialog({
     title = "New Action",
     submit = "Create",
     fields = {
-      { key = "namespace", label = "Namespace", kind = "enum", options = function()
-        return S.namespaces
-      end, value = ns },
+      V.namespace_field(ns_override or V.act.namespace),
       { key = "name", label = "Name", placeholder = "approve", required = true },
     },
     on_submit = function(v, done)
-      Api.call(SVC.ACT .. "CreateAction", { namespaceId = v.namespace, name = U.trim(v.name) }, function(err)
-        if err then
-          return done(err)
-        end
-        done()
+      UI.save(SVC.ACT .. "CreateAction", { namespaceId = v.namespace, name = U.trim(v.name) }, done, function()
         ttt.notify("Created action " .. U.trim(v.name))
         UI.load(V.act, true)
         Api.refresh_counts()
@@ -1771,6 +1850,10 @@ V.keys = UI.list("keys", {
   end,
 })
 
+V.keys_later, V.keys_cancel = ttt.debounce(150, function()
+  UI.load(V.keys)
+end)
+
 function V.keys_follow(now)
   local k = UI.selected(V.kas)
   if V.keys.kas == k and V.keys.loaded then
@@ -1779,24 +1862,20 @@ function V.keys_follow(now)
   V.keys.kas = k
   V.keys.offset = 0
   V.keys.sel = 1
-  if V.keys_timer then
-    ttt.clear_timeout(V.keys_timer)
-    V.keys_timer = nil
-  end
   if now then
+    V.keys_cancel()
     UI.load(V.keys)
     return
   end
   V.keys.loading = true
-  V.keys_timer = ttt.set_timeout(150, function()
-    V.keys_timer = nil
-    UI.load(V.keys)
-  end)
+  V.keys_later()
 end
 
 function V.can_be_base(kk)
   local key = kk and kk.key
-  return key ~= nil and key.keyMode ~= "KEY_MODE_PUBLIC_KEY_ONLY" and key.keyStatus == "KEY_STATUS_ACTIVE"
+  return key ~= nil
+    and key.keyMode ~= "KEY_MODE_PUBLIC_KEY_ONLY"
+    and key.keyStatus == "KEY_STATUS_ACTIVE"
     and not V.is_base(kk)
 end
 
@@ -1807,71 +1886,65 @@ end
 function V.kas_root()
   return {
     title = "KAS & Keys",
+    actions = function(h)
+      h:button({ label = "New", on_click = V.kas_new })
+      UI.refresh_button(h, V.kas, Api.load_base_key)
+    end,
     render = function(p, tab)
       local lv = V.kas
       UI.ensure(lv)
-      V.toolbar(p, function(h)
+      UI.toolbar(p, function(h)
         UI.search(h, lv, "Search key access servers…")
-        h:button({ label = "+ New KAS", on_click = V.kas_new })
-        h:button({ label = "Refresh", on_click = function()
-          UI.load(lv, true)
-          Api.load_base_key()
-        end })
       end)
       local w = p:size()
       local left = math.max(32, math.floor(w * 0.36))
       local k = UI.selected(lv)
       p:hstack({
         render = function(h)
-          h:box({
-            border = true,
-            title = "Key Access Servers",
-            width = left,
-            render = function(b)
-              UI.table(b, lv, {
-                noun = "servers",
-                columns = { { label = "Name" }, { label = "Keys", width = 5, align = "right" } },
-                row = function(item)
-                  if item.all then
-                    return { "All keys", tostring(S.counts.keys or "") }
-                  end
-                  return { item.name or U.host(item.uri), tostring(#(item.kasKeys or {})) }
-                end,
-                style = function(item)
-                  return item.all and "bold" or "default"
-                end,
-                on_move = function()
-                  V.keys_follow(false)
-                end,
-                on_page = function()
-                  V.keys_follow(true)
-                end,
-                on_open = function(item)
-                  if not item.all then
-                    V.push(tab, V.kas_detail(item))
-                  end
-                end,
-                keys = { n = "new", e = "edit", d = "delete" },
-                menu = {
-                  { label = "Open", command = "open" },
-                  { label = "Edit", command = "edit" },
-                  { label = "Delete", command = "delete" },
-                  { separator = true },
-                  { label = "New Key", command = "key" },
-                },
-                on_command = function(cmd, item)
-                  V.kas_command(tab, cmd, item)
-                end,
-              })
-            end,
-          })
-          h:box({
-            border = true,
-            title = k and not k.all and ("Keys · " .. (k.name or U.host(k.uri))) or "Keys · all servers",
-            render = function(b)
+          UI.frame(h, "Key Access Servers", function(b)
+            UI.table(b, lv, {
+              noun = "servers",
+              columns = { { label = "Name" }, { label = "Keys", width = 5, align = "right" } },
+              row = function(item)
+                if item.all then
+                  return { "All keys", tostring(S.counts.keys or "") }
+                end
+                return { item.name or U.host(item.uri), tostring(#(item.kasKeys or {})) }
+              end,
+              style = function(item)
+                return item.all and "bold" or "default"
+              end,
+              on_move = function()
+                V.keys_follow(false)
+              end,
+              on_page = function()
+                V.keys_follow(true)
+              end,
+              on_open = function(item)
+                if not item.all then
+                  V.push(tab, V.kas_detail(item))
+                end
+              end,
+              keys = { n = "new", e = "edit", d = "delete" },
+              menu = {
+                { label = "Open", command = "open" },
+                { label = "Edit", command = "edit" },
+                { label = "Delete", command = "delete" },
+                { separator = true },
+                { label = "New Key", command = "key" },
+              },
+              on_command = function(cmd, item)
+                V.kas_command(tab, cmd, item)
+              end,
+            })
+          end, { width = left })
+          UI.frame(
+            h,
+            k and not k.all and ("Keys · " .. (k.name or U.host(k.uri))) or "Keys · all servers",
+            function(b)
               V.keys_panel(b, tab, k)
-            end,
-          })
+            end
+          )
         end,
       })
     end,
@@ -1880,35 +1953,41 @@ end
 
 function V.keys_panel(p, tab, kas, lv)
   lv = lv or V.keys
-  p:hstack({
-    height = 1,
-    gap = 1,
-    render = function(h)
-      UI.search(h, lv, "Search keys…")
-      local algs = { { label = "All algorithms", value = "" } }
-      for _, a in ipairs(V.ALGS) do
-        algs[#algs + 1] = a
-      end
-      h:dropdown({
-        label = U.option_label(algs, lv.alg or "") .. " ▾",
-        entries = U.option_entries(algs, lv.alg or ""),
-        on_menu = function(value)
-          lv.alg = value
-          lv.offset = 0
-          UI.load(lv)
-        end,
-      })
-      h:button({ label = "+ New Key", on_click = function()
-        V.key_form(tab, kas, nil)
-      end })
-      h:button({ label = "Rotate", on_click = function()
-        V.key_command(tab, "rotate", UI.selected(lv))
-      end })
-      h:button({ label = "Set Base", disabled = not V.can_be_base(UI.selected(lv)), on_click = function()
-        V.key_command(tab, "base", UI.selected(lv))
-      end })
+  UI.toolbar(p, function(h)
+    V.keys_filters(h, lv)
+    V.keys_actions(h, tab, kas, lv)
+  end, 0)
+  V.keys_table(p, tab, kas, lv)
+end
+
+function V.keys_filters(h, lv)
+  UI.search(h, lv, "Search keys…")
+  UI.filter(h, lv, "alg", UI.with_all("All algorithms", V.ALGS))
+end
+
+function V.keys_actions(h, tab, kas, lv)
+  h:button({
+    label = "New",
+    on_click = function()
+      V.key_form(tab, kas, nil)
     end,
   })
+  h:button({
+    label = "Rotate",
+    on_click = function()
+      V.key_command(tab, "rotate", UI.selected(lv))
+    end,
+  })
+  h:button({
+    label = "Set Base",
+    disabled = not V.can_be_base(UI.selected(lv)),
+    on_click = function()
+      V.key_command(tab, "base", UI.selected(lv))
+    end,
+  })
+end
+
+function V.keys_table(p, tab, kas, lv)
   local all = not kas or kas.all
   local columns = {
     { label = "", width = 1 },
@@ -1934,7 +2013,7 @@ function V.keys_panel(p, tab, kas, lv)
         U.human(key.keyMode, "KEY_MODE_"),
         U.human(key.keyStatus, "KEY_STATUS_"),
       }
-      row[#row + 1] = all and U.host(kk.kasUri) or U.date(key.metadata and key.metadata.createdAt)
+      row[#row + 1] = all and U.host(kk.kasUri) or U.created(key)
       return row
     end,
     style = function(kk)
@@ -1972,11 +2051,16 @@ function V.kas_command(tab, cmd, k)
   elseif cmd == "key" then
     V.key_form(tab, k, nil)
   elseif cmd == "delete" then
-    UI.confirm("Delete key access server " .. (k.name or k.uri) .. "?", SVC.KAS .. "DeleteKeyAccessServer",
-      { id = k.id }, "Deleted " .. (k.name or k.uri), function()
+    UI.confirm(
+      "Delete key access server " .. (k.name or k.uri) .. "?",
+      SVC.KAS .. "DeleteKeyAccessServer",
+      { id = k.id },
+      "Deleted " .. (k.name or k.uri),
+      function()
         UI.load(V.kas, true)
         Api.refresh_counts()
-      end)
+      end
+    )
   end
 end
 
@@ -1985,8 +2069,22 @@ function V.kas_fields(k)
   return {
     { key = "name", label = "Name", value = k.name, placeholder = "kas-us-east-1" },
     { key = "uri", label = "URI", value = k.uri, placeholder = "https://kas.example.com", required = true },
-    { key = "source", label = "Source", kind = "enum", options = V.SOURCES, value = k.sourceType or "SOURCE_TYPE_INTERNAL" },
+    {
+      key = "source",
+      label = "Source",
+      kind = "enum",
+      options = V.SOURCES,
+      value = k.sourceType or "SOURCE_TYPE_INTERNAL",
+    },
   }
+end
+
+function V.kas_request(v, id)
+  local req = { id = id, uri = U.trim(v.uri), sourceType = v.source }
+  if U.trim(v.name) ~= "" then
+    req.name = U.trim(v.name)
+  end
+  return req
 end
 
 function V.kas_new()
@@ -1995,15 +2093,8 @@ function V.kas_new()
     submit = "Create",
     fields = V.kas_fields(nil),
     on_submit = function(v, done)
-      local req = { uri = U.trim(v.uri), sourceType = v.source }
-      if U.trim(v.name) ~= "" then
-        req.name = U.trim(v.name)
-      end
-      Api.call(SVC.KAS .. "CreateKeyAccessServer", req, function(err)
-        if err then
-          return done(err)
-        end
-        done()
+      local req = V.kas_request(v)
+      UI.save(SVC.KAS .. "CreateKeyAccessServer", req, done, function()
         ttt.notify("Created key access server " .. (req.name or req.uri))
         UI.load(V.kas, true)
         Api.refresh_counts()
@@ -2018,16 +2109,9 @@ function V.kas_edit(k)
     submit = "Save",
     fields = V.kas_fields(k),
     on_submit = function(v, done)
-      local req = { id = k.id, uri = U.trim(v.uri), sourceType = v.source }
-      if U.trim(v.name) ~= "" then
-        req.name = U.trim(v.name)
-      end
-      Api.call(SVC.KAS .. "UpdateKeyAccessServer", req, function(err)
-        if err then
-          return done(err)
-        end
+      local req = V.kas_request(v, k.id)
+      UI.save(SVC.KAS .. "UpdateKeyAccessServer", req, done, function()
         k.name, k.uri, k.sourceType = req.name, req.uri, req.sourceType
-        done()
       end)
     end,
   })
@@ -2041,10 +2125,33 @@ function V.kas_detail(k)
     request = function(lv)
       return V.keys_request(lv, k.id)
     end,
-    extract = function(data)
-      return data.kasKeys
-    end,
+    extract = V.keys.spec.extract,
   })
+  page.actions = function(h, tab)
+    if page.tab == "keys" then
+      V.keys_actions(h, tab, k, keys)
+      UI.refresh_button(h, keys)
+      return
+    end
+    h:button({
+      label = "New Key",
+      on_click = function()
+        V.key_form(tab, k, nil)
+      end,
+    })
+    h:button({
+      label = "Edit",
+      on_click = function()
+        V.kas_edit(k)
+      end,
+    })
+    h:button({
+      label = "Delete",
+      on_click = function()
+        V.kas_command(tab, "delete", k)
+      end,
+    })
+  end
   page.render = function(p, tab)
     local current = V.tab_strip(p, page, {
       { id = "details", label = "Details" },
@@ -2052,7 +2159,12 @@ function V.kas_detail(k)
     })
     if current == "keys" then
       UI.ensure(keys)
-      V.keys_panel(p, tab, k, keys)
+      UI.toolbar(p, function(h)
+        V.keys_filters(h, keys)
+      end)
+      UI.frame(p, "Keys", function(b)
+        V.keys_table(b, tab, k, keys)
+      end)
       return
     end
     p:keyvalue(V.kv({
@@ -2061,20 +2173,9 @@ function V.kas_detail(k)
       { "Source", U.human(k.sourceType, "SOURCE_TYPE_") },
       { "Keys", tostring(#(k.kasKeys or {})) },
       { "ID", k.id },
-      { "Created", U.date(k.metadata and k.metadata.createdAt) },
-      { "Updated", U.date(k.metadata and k.metadata.updatedAt) },
+      { "Created", U.created(k) },
+      { "Updated", U.updated(k) },
     }))
-    V.toolbar(p, function(h)
-      h:button({ label = "+ New Key", on_click = function()
-        V.key_form(tab, k, nil)
-      end })
-      h:button({ label = "Edit", on_click = function()
-        V.kas_edit(k)
-      end })
-      h:button({ label = "Delete", on_click = function()
-        V.kas_command(tab, "delete", k)
-      end })
-    end)
   end
   return page
 end
@@ -2089,17 +2190,25 @@ function V.key_command(tab, cmd, kk)
     V.key_form(tab, nil, kk)
   elseif cmd == "base" and not V.can_be_base(kk) then
     if kk.key.keyMode == "KEY_MODE_PUBLIC_KEY_ONLY" then
-      ttt.notify("A public-key-only key can't be the base key: the platform has no private key to decrypt with", "warning")
+      ttt.notify(
+        "A public-key-only key can't be the base key: the platform has no private key to decrypt with",
+        "warning"
+      )
     elseif V.is_base(kk) then
       ttt.notify(kk.key.keyId .. " is already the base key")
     else
       ttt.notify("Only an active key can be the base key", "warning")
     end
   elseif cmd == "base" then
-    UI.confirm("Make " .. kk.key.keyId .. " on " .. U.host(kk.kasUri) .. " the base key? New TDFs use it by default.",
-      SVC.KAS .. "SetBaseKey", { id = kk.key.id }, "Base key is now " .. kk.key.keyId, function()
+    UI.confirm(
+      "Make " .. kk.key.keyId .. " on " .. U.host(kk.kasUri) .. " the base key? New TDFs use it by default.",
+      SVC.KAS .. "SetBaseKey",
+      { id = kk.key.id },
+      "Base key is now " .. kk.key.keyId,
+      function()
         Api.load_base_key()
-      end)
+      end
+    )
   end
 end
 
@@ -2115,7 +2224,23 @@ function V.key_detail(kk)
   local key = kk.key or {}
   return {
     title = key.keyId or "key",
-    render = function(p, tab)
+    actions = function(h, tab)
+      h:button({
+        label = "Rotate",
+        on_click = function()
+          V.key_command(tab, "rotate", kk)
+        end,
+      })
+      if V.can_be_base(kk) then
+        h:button({
+          label = "Set Base",
+          on_click = function()
+            V.key_command(tab, "base", kk)
+          end,
+        })
+      end
+    end,
+    render = function(p)
       p:keyvalue(V.kv({
         { "Key ID", key.keyId },
         { "KAS", kk.kasUri },
@@ -2125,18 +2250,8 @@ function V.key_detail(kk)
         { "Base key", V.is_base(kk) and "Yes" or "No" },
         { "Provider", key.providerConfig and key.providerConfig.name or "" },
         { "ID", key.id },
-        { "Created", U.date(key.metadata and key.metadata.createdAt) },
+        { "Created", U.created(key) },
       }))
-      V.toolbar(p, function(h)
-        h:button({ label = "Rotate…", on_click = function()
-          V.key_command(tab, "rotate", kk)
-        end })
-        if V.can_be_base(kk) then
-          h:button({ label = "Set as Base Key", on_click = function()
-            V.key_command(tab, "base", kk)
-          end })
-        end
-      end)
       local pem = V.pem(kk)
       if pem then
         p:markdown({ text = "**Public key**\n\n```\n" .. pem .. "\n```", margin_top = 1, padding_left = 1 })
@@ -2169,13 +2284,31 @@ function V.key_form(tab, kas, rotating)
       { key = "key_id", label = "Key ID", required = true, placeholder = rotating and (old.keyId .. "-2") or "r1" },
       { key = "alg", label = "Algorithm", kind = "enum", options = V.ALGS, value = old.keyAlgorithm },
       { key = "mode", label = "Mode", kind = "enum", options = V.MODES, value = old.keyMode },
-      { key = "pem", label = "Public key (PEM)", kind = "multiline", rows = 8, required = true,
-        placeholder = "-----BEGIN PUBLIC KEY-----" },
-      { key = "wrapped", label = "Wrapped private key (base64)", kind = "multiline", rows = 3, required = true,
-        show = V.needs_private },
-      { key = "provider", label = "Provider config", kind = "enum", options = function()
-        return S.providers
-      end, show = V.needs_provider },
+      {
+        key = "pem",
+        label = "Public key (PEM)",
+        kind = "multiline",
+        rows = 8,
+        required = true,
+        placeholder = "-----BEGIN PUBLIC KEY-----",
+      },
+      {
+        key = "wrapped",
+        label = "Wrapped private key (base64)",
+        kind = "multiline",
+        rows = 3,
+        required = true,
+        show = V.needs_private,
+      },
+      {
+        key = "provider",
+        label = "Provider config",
+        kind = "enum",
+        options = function()
+          return S.providers
+        end,
+        show = V.needs_provider,
+      },
     },
     on_submit = function(v, done)
       local key = {
@@ -2198,11 +2331,7 @@ function V.key_form(tab, kas, rotating)
         key.kasId = kas.id
         path, req = SVC.KAS .. "CreateKey", key
       end
-      Api.call(path, req, function(err)
-        if err then
-          return done(err)
-        end
-        done()
+      UI.save(path, req, done, function()
         ttt.notify((rotating and "Rotated to " or "Created key ") .. key.keyId)
         V.back(tab)
         for name, lv in pairs(V.lists) do
@@ -2236,7 +2365,6 @@ function V.key_form(tab, kas, rotating)
     end,
   })
 end
-
 
 -- Authorization (v2) ---------------------------------------------------------
 
@@ -2286,32 +2414,19 @@ function V.entity_label(entity)
 end
 
 function V.entity_fields(h, entity, on_submit)
-  h:box({
-    border = true,
-    title = "Entity",
-    width = 28,
-    render = function(b)
-      b:dropdown({
-        label = U.option_label(V.ENTITY_TYPES, entity.kind) .. " ▾",
-        entries = U.option_entries(V.ENTITY_TYPES, entity.kind),
-        on_menu = function(kind)
-          if kind ~= entity.kind then
-            entity.kind = kind
-            entity.value = kind == "clientId" and S.conn.client_id or ""
-          end
-          S.redraw()
-        end,
-      })
-    end,
-  })
+  UI.frame(h, "Entity", function(b)
+    UI.dropdown(b, V.ENTITY_TYPES, entity.kind, function(kind)
+      if kind ~= entity.kind then
+        entity.kind = kind
+        entity.value = kind == "clientId" and S.conn.client_id or ""
+      end
+      S.redraw()
+    end)
+  end, { width = 28 })
   if entity.kind == "request" then
-    h:box({
-      border = true,
-      title = "Value",
-      render = function(b)
-        b:label({ text = V.ENTITY_HINTS.request, style = "muted", padding_left = 1 })
-      end,
-    })
+    UI.frame(h, "Value", function(b)
+      b:label({ text = V.ENTITY_HINTS.request, style = "muted", padding_left = 1 })
+    end)
   else
     h:input({
       border = true,
@@ -2326,16 +2441,6 @@ function V.entity_fields(h, entity, on_submit)
   end
 end
 
-function V.button_box(h, label, on_click, disabled)
-  h:box({
-    padding_top = 1,
-    width = #label + 2,
-    render = function(b)
-      b:button({ label = label, on_click = on_click, disabled = disabled })
-    end,
-  })
-end
-
 -- Entitlements
 
 V.ent = {
@@ -2347,11 +2452,18 @@ V.ent = {
   list = UI.list("entitlements", { client = true }),
 }
 
-function V.ent_run()
-  local st = V.ent
+function V.missing_entity(st)
   if st.entity.kind ~= "request" and U.trim(st.entity.value) == "" then
     st.err = "Enter an entity first"
     S.redraw()
+    return true
+  end
+  return false
+end
+
+function V.ent_run()
+  local st = V.ent
+  if V.missing_entity(st) then
     return
   end
   st.busy = true
@@ -2424,16 +2536,10 @@ function V.ent_root()
         margin_top = 1,
         render = function(h)
           V.entity_fields(h, st.entity, V.ent_run)
-          h:box({
-            padding_top = 1,
-            width = 20,
-            render = function(b)
-              b:checkbox({ label = "Full hierarchy", checked = st.comprehensive, on_change = function(v)
-                st.comprehensive = v
-              end })
-            end,
-          })
-          V.button_box(h, st.busy and "Checking…" or "Get Entitlements", V.ent_run, st.busy)
+          UI.checkbox(h, "Full hierarchy", st.comprehensive, function(v)
+            st.comprehensive = v
+          end, { padding_top = 1 })
+          UI.button_box(h, st.busy and "Checking…" or "Get Entitlements", V.ent_run, st.busy)
         end,
       })
       local summary, style = "", "muted"
@@ -2453,15 +2559,7 @@ function V.ent_root()
         margin_top = 1,
         render = function(h)
           h:label({ text = summary, style = style, padding_left = 1, width = math.max(w - 44, 10) })
-          h:input({
-            prefix = "⌕ ",
-            placeholder = "Filter values or actions…",
-            value = st.list.search,
-            on_change = function(text)
-              st.list.search = text
-              V.ent_filter()
-            end,
-          })
+          UI.search(h, st.list, "Filter values or actions…", V.ent_filter)
         end,
       })
       local columns = { { label = "Attribute value" }, { label = "Actions", width = 28 } }
@@ -2469,6 +2567,7 @@ function V.ent_root()
         table.insert(columns, 1, { label = "Entity", width = 28 })
       end
       UI.table(p, st.list, {
+        frame = "Entitlements",
         noun = "entitlements",
         empty = st.ran and "This entity isn't entitled to any attribute values"
           or "Choose an entity and press Get Entitlements",
@@ -2503,9 +2602,7 @@ V.dec = {
 
 function V.dec_run()
   local st = V.dec
-  if st.entity.kind ~= "request" and U.trim(st.entity.value) == "" then
-    st.err = "Enter an entity first"
-    S.redraw()
+  if V.missing_entity(st) then
     return
   end
   if #st.resources == 0 then
@@ -2545,8 +2642,11 @@ function V.dec_run()
         return done(err)
       end
       local d = data.decision or {}
-      done(nil, { { label = #fqns .. " value" .. (#fqns == 1 and "" or "s") .. " together", decision = d.decision } },
-        d.requiredObligations)
+      done(
+        nil,
+        { { label = #fqns .. " value" .. (#fqns == 1 and "" or "s") .. " together", decision = d.decision } },
+        d.requiredObligations
+      )
     end)
     return
   end
@@ -2605,7 +2705,7 @@ function V.value_picker(on_pick)
       local out = {}
       for _, a in ipairs((data and data.attributes) or {}) do
         for _, v in ipairs(a.values or {}) do
-          out[#out + 1] = { fqn = v.fqn, rule = U.human(a.rule, "ATTRIBUTE_RULE_TYPE_ENUM_") }
+          out[#out + 1] = { fqn = v.fqn, rule = U.rule(a) }
         end
       end
       lv.all = out
@@ -2616,46 +2716,26 @@ function V.value_picker(on_pick)
     end)
   end
   fetch()
-  ttt.open_dialog({
-    title = "Add Attribute Value",
-    width = 96,
-    height = 26,
-    render = function(p)
-      S.panels.dialog = p
-      p:input({
-        prefix = "⌕ ",
-        placeholder = "Search attributes, e.g. acme or department…",
-        value = lv.search,
-        on_change = function(text)
-          lv.search = text
-          V.picker_search = text
-          if lv.timer then
-            ttt.clear_timeout(lv.timer)
-          end
-          lv.timer = ttt.set_timeout(250, function()
-            lv.timer = nil
-            fetch()
-          end)
-        end,
-      })
-      UI.table(p, lv, {
-        noun = "values",
-        empty = "No attribute values match",
-        columns = { { label = "Attribute value" }, { label = "Rule", width = 9 } },
-        row = function(r)
-          return { r.fqn, r.rule }
-        end,
-        on_open = function(r)
-          ttt.close_dialog()
-          on_pick(r.fqn)
-        end,
-      })
-      p:label({ text = "Enter or double-click adds the value.", style = "muted" })
-    end,
-    on_close = function()
-      S.panels.dialog = nil
-    end,
-  })
+  UI.open_dialog("Add Attribute Value", 96, 26, function(p)
+    UI.search(p, lv, "Search attributes, e.g. acme or department…", function()
+      V.picker_search = lv.search
+      fetch()
+    end)
+    UI.table(p, lv, {
+      frame = "Attribute values",
+      noun = "values",
+      empty = "No attribute values match",
+      columns = { { label = "Attribute value" }, { label = "Rule", width = 9 } },
+      row = function(r)
+        return { r.fqn, r.rule }
+      end,
+      on_open = function(r)
+        ttt.close_dialog()
+        on_pick(r.fqn)
+      end,
+    })
+    p:label({ text = "Enter or double-click adds the value.", style = "muted" })
+  end)
 end
 
 function V.dec_root()
@@ -2672,74 +2752,78 @@ function V.dec_root()
           h:box({
             width = 18,
             render = function(b)
-              b:input({ border = true, title = "Action", value = st.action, placeholder = "read",
+              b:input({
+                border = true,
+                title = "Action",
+                value = st.action,
+                placeholder = "read",
                 on_change = function(text)
                   st.action = text
-                end, on_submit = V.dec_run })
+                end,
+                on_submit = V.dec_run,
+              })
             end,
           })
-          V.button_box(h, st.busy and "Deciding…" or "Get Decision", V.dec_run, st.busy)
+          UI.button_box(h, st.busy and "Deciding…" or "Get Decision", V.dec_run, st.busy)
         end,
       })
       p:hstack({
         height = 1,
         gap = 1,
         margin_top = 1,
+        align = "right",
         render = function(h)
-          h:label({ text = "Resource attribute values", style = "bold", padding_left = 1 })
-          h:button({ label = "+ Add Value…", on_click = function()
-            V.value_picker(function(fqn)
-              for _, f in ipairs(st.resources) do
-                if f == fqn then
-                  return
+          h:button({
+            label = "Add Value",
+            on_click = function()
+              V.value_picker(function(fqn)
+                for _, f in ipairs(st.resources) do
+                  if f == fqn then
+                    return
+                  end
                 end
-              end
-              st.resources[#st.resources + 1] = fqn
-              S.redraw()
-            end)
-          end })
-          h:checkbox({ label = "Decide each value separately", checked = st.each, on_change = function(v)
+                st.resources[#st.resources + 1] = fqn
+                S.redraw()
+              end)
+            end,
+          })
+          UI.checkbox(h, "Decide each value separately", st.each, function(v)
             st.each = v
-          end })
+          end)
         end,
       })
       local rows = {}
       for i, f in ipairs(st.resources) do
-        rows[i] = f
+        rows[i] = { f }
       end
-      p:box({
-        height = math.max(math.min(#rows, 8), 2) + 2,
-        render = function(b)
-          b:table({
-            inset = 1,
-            columns = { { label = "Attribute value FQN" } },
-            rows = (function()
-              local out = {}
-              for i, f in ipairs(rows) do
-                out[i] = { f }
-              end
-              return out
-            end)(),
-            empty = "Add the attribute values the resource carries",
-            key_commands = { d = "remove", x = "remove" },
-            node_menu = { { label = "Remove", command = "remove" } },
-            on_command = function(cmd, i)
-              if cmd == "remove" then
-                table.remove(st.resources, i)
-                S.redraw()
-              end
-            end,
-          })
-        end,
-      })
+      UI.frame(p, "Resource attribute values", function(b)
+        b:table({
+          inset = 1,
+          columns = { { label = "Attribute value FQN" } },
+          rows = rows,
+          empty = "Add the attribute values the resource carries",
+          key_commands = { d = "remove", x = "remove" },
+          node_menu = { { label = "Remove", command = "remove" } },
+          on_command = function(cmd, i)
+            if cmd == "remove" then
+              table.remove(st.resources, i)
+              S.redraw()
+            end
+          end,
+        })
+      end, { height = math.max(math.min(#rows, 8), 2) + 4 })
       local r = st.result
       if st.err then
         p:label({ text = "✕ " .. st.err, style = "danger", margin_top = 1, padding_left = 1 })
         return
       end
       if not r then
-        p:label({ text = "Pick an entity, an action and the resource's attribute values, then press Get Decision.",
-          style = "muted", margin_top = 1, padding_left = 1 })
+        p:label({
+          text = "Pick an entity, an action and the resource's attribute values, then press Get Decision.",
+          style = "muted",
+          margin_top = 1,
+          padding_left = 1,
+        })
         return
       end
       local permit = V.verdict(r.decisions)
@@ -2785,13 +2869,14 @@ function V.dec_root()
           dstyles[#drows] = "warning"
         end
       end
-      p:table({
-        inset = 1,
-        columns = { { label = "Decision", width = 10 }, { label = "Resource" } },
-        rows = drows,
-        row_styles = dstyles,
-        margin_top = 1,
-      })
+      UI.frame(p, "Decisions", function(b)
+        b:table({
+          inset = 1,
+          columns = { { label = "Decision", width = 10 }, { label = "Resource" } },
+          rows = drows,
+          row_styles = dstyles,
+        })
+      end, { margin_top = 1 })
     end,
   }
 end
@@ -2813,9 +2898,21 @@ function V.connection_dialog()
     submit = "Connect",
     width = 70,
     fields = {
-      { key = "url", label = "Platform URL", value = S.conn.url, required = true, placeholder = "http://localhost:8080" },
+      {
+        key = "url",
+        label = "Platform URL",
+        value = S.conn.url,
+        required = true,
+        placeholder = "http://localhost:8080",
+      },
       { key = "client_id", label = "Client ID", value = S.conn.client_id, required = true, placeholder = "opentdf" },
-      { key = "client_secret", label = "Client secret", value = S.conn.client_secret, password = true, required = true },
+      {
+        key = "client_secret",
+        label = "Client secret",
+        value = S.conn.client_secret,
+        password = true,
+        required = true,
+      },
     },
     on_submit = function(v, done)
       local url = U.trim(v.url):gsub("/+$", "")
@@ -2891,6 +2988,8 @@ function V.links(p, items)
     render = function(b)
       b:list({
         items = items,
+        inset = 1,
+        badge_right = true,
         on_select = function(node)
           if node.id == "conn" then
             V.connection_dialog()
@@ -2903,32 +3002,47 @@ function V.links(p, items)
   })
 end
 
+function V.nav_section(p, section)
+  local muted = S.status ~= "ok"
+  local items = {}
+  for i, item in ipairs(section.items) do
+    items[i] = { id = item.id, label = item.label, badge = item.count and V.badge(item.id), muted = muted }
+  end
+  p:label({ text = "• " .. section.title, style = "muted", margin_top = 1, padding_left = 1 })
+  V.links(p, items)
+end
+
 function V.sidebar(p)
   S.panels.sidebar = p
   Api.ensure_connected()
-  local muted = S.status ~= "ok"
+  for _, section in ipairs(V.NAV) do
+    V.nav_section(p, section)
+  end
+  p:box({ render = function() end })
+  if S.status == "error" then
+    p:label({ text = "✕ " .. S.message, style = "danger", padding_left = 1 })
+  end
+  p:divider()
   V.links(p, { V.status_item() })
-  p:title({ text = "POLICY", margin_top = 1, padding_left = 1 })
-  V.links(p, {
-    { id = "namespaces", label = "Namespaces", badge = V.badge("namespaces"), muted = muted },
-    { id = "attributes", label = "Attributes", badge = V.badge("attributes"), muted = muted },
-    { id = "actions", label = "Actions", badge = V.badge("actions"), muted = muted },
-  })
-  p:title({ text = "KEYS", margin_top = 1, padding_left = 1 })
-  V.links(p, {
-    { id = "kas", label = "KAS & Keys", badge = V.badge("kas"), muted = muted },
-  })
-  p:title({ text = "AUTHORIZATION", margin_top = 1, padding_left = 1 })
-  V.links(p, {
-    { id = "entitlements", label = "Entitlements", muted = muted },
-    { id = "decision", label = "Decision", muted = muted },
-  })
-  p:label({
-    text = S.status == "error" and ("✕ " .. S.message) or "",
-    style = "danger",
-    margin_top = 1,
-    padding_left = 1,
-  })
+end
+
+function V.commands()
+  local cmds = {
+    { id = "opentdf.connection", title = "OpenTDF: Connection…", handler = V.connection_dialog },
+    { id = "opentdf.settings", title = "OpenTDF: Settings…", handler = V.settings_dialog },
+  }
+  for _, section in ipairs(V.NAV) do
+    for _, item in ipairs(section.items) do
+      cmds[#cmds + 1] = {
+        id = "opentdf." .. item.id,
+        title = "OpenTDF: " .. item.label,
+        handler = function()
+          V.open(item.id)
+        end,
+      }
+    end
+  end
+  return cmds
 end
 
 ttt.register({
@@ -2953,26 +3067,5 @@ ttt.register({
       end
     end,
   },
-  commands = {
-    { id = "opentdf.connection", title = "OpenTDF: Connection…", handler = V.connection_dialog },
-    { id = "opentdf.settings", title = "OpenTDF: Settings…", handler = V.settings_dialog },
-    { id = "opentdf.namespaces", title = "OpenTDF: Namespaces", handler = function()
-      V.open("namespaces")
-    end },
-    { id = "opentdf.attributes", title = "OpenTDF: Attributes", handler = function()
-      V.open("attributes")
-    end },
-    { id = "opentdf.actions", title = "OpenTDF: Actions", handler = function()
-      V.open("actions")
-    end },
-    { id = "opentdf.kas", title = "OpenTDF: KAS & Keys", handler = function()
-      V.open("kas")
-    end },
-    { id = "opentdf.entitlements", title = "OpenTDF: Entitlements", handler = function()
-      V.open("entitlements")
-    end },
-    { id = "opentdf.decision", title = "OpenTDF: Decision", handler = function()
-      V.open("decision")
-    end },
-  },
+  commands = V.commands(),
 })

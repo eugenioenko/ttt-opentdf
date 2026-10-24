@@ -46,7 +46,7 @@ Keys created here use the **Public key only** mode by default: paste the public 
 
 ## Requirements
 
-The plugin uses widget features that are not in a ttt release yet: the `pager` and `tabs` widgets, `open_tab` IDs, table `on_activate`, `inset`, `loading` and `empty`, bordered and titled inputs, and `crypto.base64_*`. Until they ship, build ttt from the `feat/plugin-pager` branch.
+The plugin uses widget features that are not in a ttt release yet: the `pager` and `tabs` widgets, `open_tab` IDs, table `on_activate`, `inset`, `loading` and `empty`, list `badge_right` and `inset`, hstack `align`, bordered and titled inputs, `ttt.debounce` and `crypto.base64_*`. Until they ship, build ttt from the `feat/plugin-pager` branch.
 
 ## License
 
