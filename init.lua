@@ -151,9 +151,10 @@ local Api = require("core.api")
 local Nav = require("app.nav")
 local Connection = require("app.connection")
 
--- One editor tab per feature. Each tab holds a stack of pages:
--- { title, render(p, tab), actions(h, tab)?, tab? }. actions draw on the
--- right of the title row.
+-- Every feature and every detail page gets its own editor tab. A tab holds a
+-- stack of pages, { title, tab_title?, render(p, tab), actions(h, tab)?, tab? },
+-- for steps like a form that return with ‹ Back. actions draw on the right of
+-- the title row.
 local M = {}
 
 M.roots = {}
@@ -188,8 +189,11 @@ local function render(tab, p)
     return
   end
   local crumbs = {}
-  for i, page in ipairs(tab.stack) do
-    crumbs[i] = page.title
+  for _, title in ipairs(tab.context or {}) do
+    crumbs[#crumbs + 1] = title
+  end
+  for _, page in ipairs(tab.stack) do
+    crumbs[#crumbs + 1] = page.title
   end
   local page = tab.stack[#tab.stack]
   p:hstack({
@@ -213,17 +217,13 @@ local function render(tab, p)
   page.render(p, tab)
 end
 
-function M.open(id)
-  local tab = M.tabs[id]
-  if not tab then
-    tab = { id = id, stack = { M.roots[id]() } }
-    M.tabs[id] = tab
-  end
+-- ttt focuses an open tab with the same id and ignores the rest.
+local function open_tab(tab, title)
   ttt.open_tab({
-    id = id,
-    title = Nav.titles[id],
+    id = tab.id,
+    title = title,
     render = function(p)
-      S.panels[id] = p
+      S.panels[tab.id] = p
       render(tab, p)
     end,
     on_event = function(ev)
@@ -231,8 +231,48 @@ function M.open(id)
         M.back(tab)
       end
     end,
+    on_close = function()
+      S.panels[tab.id] = nil
+      M.tabs[tab.id] = nil
+    end,
   })
+end
+
+-- Opens a feature's tab, or focuses it when it is already open.
+function M.open(id)
+  local tab = M.tabs[id]
+  if not tab then
+    tab = { id = id, stack = { M.roots[id]() } }
+    M.tabs[id] = tab
+  end
+  open_tab(tab, Nav.titles[id])
   return tab
+end
+
+-- Opens a detail page in its own tab, keyed by what it shows, or focuses that
+-- tab when it is already open. The title row keeps the trail it came from.
+function M.show(from, key, page)
+  local id = "page:" .. key
+  local tab = M.tabs[id]
+  if tab then
+    open_tab(tab, page.tab_title or page.title)
+    return tab
+  end
+  local context = {}
+  for _, title in ipairs(from and from.context or {}) do
+    context[#context + 1] = title
+  end
+  for _, p in ipairs(from and from.stack or {}) do
+    context[#context + 1] = p.title
+  end
+  tab = { id = id, stack = { page }, context = context }
+  M.tabs[id] = tab
+  open_tab(tab, page.tab_title or page.title)
+  return tab
+end
+
+function M.close_page(key)
+  ttt.close_tab("page:" .. key)
 end
 
 -- Opens a feature's list filtered to one namespace.
@@ -1624,7 +1664,7 @@ function M.attribute(tab, cmd, a)
   elseif not a then
     return
   elseif cmd == "open" then
-    Router.push(tab, (pages()).page(a))
+    Router.show(tab, "attribute:" .. a.id, (pages()).page(a))
   elseif cmd == "value" then
     M.new_value(a)
   elseif cmd == "labels" then
@@ -1655,7 +1695,7 @@ function M.value(tab, cmd, a, v)
     return
   elseif cmd == "open" then
     local _, value_page = pages()
-    Router.push(tab, value_page.page(a, v))
+    Router.show(tab, "value:" .. v.id, value_page.page(a, v))
   elseif cmd == "labels" then
     Policy.labels_dialog("Value " .. v.value, v, SVC.ATTR .. "UpdateAttributeValue", nil)
   elseif cmd == "deactivate" then
@@ -1687,7 +1727,7 @@ local Values = require("features.attributes.values_table")
 local M = {}
 
 function M.page(a)
-  local page = { title = a.fqn }
+  local page = { title = a.fqn, tab_title = a.name }
   local values = Store.attribute_values(a)
   page.actions = function(h, tab)
     if page.tab == "values" then
@@ -2655,7 +2695,7 @@ function M.server(tab, cmd, k)
   elseif not k or k.all then
     return
   elseif cmd == "open" then
-    Router.push(tab, require("features.kas.detail_page").page(k))
+    Router.show(tab, "kas:" .. k.id, require("features.kas.detail_page").page(k))
   elseif cmd == "edit" then
     M.edit_server(k)
   elseif cmd == "key" then
@@ -2667,6 +2707,7 @@ function M.server(tab, cmd, k)
       { id = k.id },
       "Deleted " .. (k.name or k.uri),
       function()
+        Router.close_page("kas:" .. k.id)
         UI.load(Store.servers, true)
         Api.refresh_counts()
       end
@@ -2679,7 +2720,7 @@ function M.key(tab, cmd, kk)
     return
   end
   if cmd == "open" then
-    Router.push(tab, require("features.kas.key_page").page(kk))
+    Router.show(tab, "key:" .. kk.key.id, require("features.kas.key_page").page(kk))
   elseif cmd == "rotate" then
     KeyForm.open(tab, nil, kk)
   elseif cmd == "base" and not Store.can_be_base(kk) then
@@ -3323,7 +3364,7 @@ function M.run(tab, cmd, n)
   elseif not n then
     return
   elseif cmd == "open" then
-    Router.push(tab, require("features.namespaces.detail_page").page(n))
+    Router.show(tab, "namespace:" .. n.id, require("features.namespaces.detail_page").page(n))
   elseif cmd == "labels" then
     Policy.labels_dialog("Namespace " .. n.name, n, SVC.NS .. "UpdateNamespace", function()
       UI.load(Store.list, true)
@@ -3382,7 +3423,7 @@ local function attributes_tab(p, tab, n, attrs)
     end,
     style = U.inactive_style,
     on_open = function(a)
-      Router.push(tab, Attributes.detail_page.page(a))
+      Attributes.commands.attribute(tab, "open", a)
     end,
   })
 end

@@ -6,7 +6,7 @@ OpenTDF is an open source system for attribute-based access control and data-cen
 
 ## Features
 
-The **OpenTDF** sidebar panel lists what you can open. Each view opens in an editor tab:
+The **OpenTDF** sidebar panel lists what you can open. Each view opens in an editor tab, and so does each namespace, attribute, value, server or key you open from it (opening one again focuses its tab):
 
 - **Namespaces**: search, filter by state, create, edit labels, deactivate. A namespace's page has tabs for its attributes and actions.
 - **Attributes**: attributes on the left and the selected attribute's values on the right. Filter by namespace, state or text. Create attributes and values, edit labels, deactivate.
@@ -65,7 +65,7 @@ src/
   features/<name>/  one folder per screen: store, commands, pages
 ```
 
-A feature exposes `{ id, root }` from its `init.lua`. Its `store` holds the lists and state, `commands` the dialogs and API calls, and each `*_page.lua` renders one page. When two modules need each other (commands that open a detail page, a detail page that runs commands), require the second one inside the function that uses it: a `require` cycle at load time is an error.
+A feature exposes `{ id, root }` from its `init.lua`; `Router.show` opens a detail page in its own tab and `Router.push` adds a step, like a form, inside the current one. Its `store` holds the lists and state, `commands` the dialogs and API calls, and each `*_page.lua` renders one page. When two modules need each other (commands that open a detail page, a detail page that runs commands), require the second one inside the function that uses it: a `require` cycle at load time is an error.
 
 Runtime errors point at lines in `init.lua`. Each module starts with a `-- src/…` comment there, so search upward from the line to find the source file.
 
@@ -73,7 +73,7 @@ Format with `stylua src` (settings in `.stylua.toml`).
 
 ## Requirements
 
-The plugin uses widget features that are not in a ttt release yet: the `pager` and `tabs` widgets, `open_tab` IDs, table `on_activate`, `inset`, `loading` and `empty`, list `badge_right` and `inset`, hstack `align`, bordered and titled inputs, `ttt.debounce` and `crypto.base64_*`. Until they ship, build ttt from the `feat/plugin-pager` branch.
+The plugin uses widget features that are not in a ttt release yet: the `pager` and `tabs` widgets, `open_tab` IDs and `on_close`, table `on_activate`, `inset`, `loading` and `empty`, list `badge_right` and `inset`, hstack `align`, bordered and titled inputs, `ttt.debounce` and `crypto.base64_*`. Until they ship, build ttt from the `feat/plugin-pager` branch.
 
 ## License
 

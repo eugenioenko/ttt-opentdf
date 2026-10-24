@@ -9,7 +9,7 @@ local Values = require("features.attributes.values_table")
 local M = {}
 
 function M.page(a)
-  local page = { title = a.fqn }
+  local page = { title = a.fqn, tab_title = a.name }
   local values = Store.attribute_values(a)
   page.actions = function(h, tab)
     if page.tab == "values" then

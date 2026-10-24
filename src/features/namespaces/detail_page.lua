@@ -28,7 +28,7 @@ local function attributes_tab(p, tab, n, attrs)
     end,
     style = U.inactive_style,
     on_open = function(a)
-      Router.push(tab, Attributes.detail_page.page(a))
+      Attributes.commands.attribute(tab, "open", a)
     end,
   })
 end

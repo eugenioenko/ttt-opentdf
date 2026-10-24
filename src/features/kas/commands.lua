@@ -68,7 +68,7 @@ function M.server(tab, cmd, k)
   elseif not k or k.all then
     return
   elseif cmd == "open" then
-    Router.push(tab, require("features.kas.detail_page").page(k))
+    Router.show(tab, "kas:" .. k.id, require("features.kas.detail_page").page(k))
   elseif cmd == "edit" then
     M.edit_server(k)
   elseif cmd == "key" then
@@ -80,6 +80,7 @@ function M.server(tab, cmd, k)
       { id = k.id },
       "Deleted " .. (k.name or k.uri),
       function()
+        Router.close_page("kas:" .. k.id)
         UI.load(Store.servers, true)
         Api.refresh_counts()
       end
@@ -92,7 +93,7 @@ function M.key(tab, cmd, kk)
     return
   end
   if cmd == "open" then
-    Router.push(tab, require("features.kas.key_page").page(kk))
+    Router.show(tab, "key:" .. kk.key.id, require("features.kas.key_page").page(kk))
   elseif cmd == "rotate" then
     KeyForm.open(tab, nil, kk)
   elseif cmd == "base" and not Store.can_be_base(kk) then

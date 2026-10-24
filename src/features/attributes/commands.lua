@@ -65,7 +65,7 @@ function M.attribute(tab, cmd, a)
   elseif not a then
     return
   elseif cmd == "open" then
-    Router.push(tab, (pages()).page(a))
+    Router.show(tab, "attribute:" .. a.id, (pages()).page(a))
   elseif cmd == "value" then
     M.new_value(a)
   elseif cmd == "labels" then
@@ -96,7 +96,7 @@ function M.value(tab, cmd, a, v)
     return
   elseif cmd == "open" then
     local _, value_page = pages()
-    Router.push(tab, value_page.page(a, v))
+    Router.show(tab, "value:" .. v.id, value_page.page(a, v))
   elseif cmd == "labels" then
     Policy.labels_dialog("Value " .. v.value, v, SVC.ATTR .. "UpdateAttributeValue", nil)
   elseif cmd == "deactivate" then

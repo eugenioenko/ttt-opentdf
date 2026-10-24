@@ -41,7 +41,7 @@ function M.run(tab, cmd, n)
   elseif not n then
     return
   elseif cmd == "open" then
-    Router.push(tab, require("features.namespaces.detail_page").page(n))
+    Router.show(tab, "namespace:" .. n.id, require("features.namespaces.detail_page").page(n))
   elseif cmd == "labels" then
     Policy.labels_dialog("Namespace " .. n.name, n, SVC.NS .. "UpdateNamespace", function()
       UI.load(Store.list, true)

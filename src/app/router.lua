@@ -4,9 +4,10 @@ local Api = require("core.api")
 local Nav = require("app.nav")
 local Connection = require("app.connection")
 
--- One editor tab per feature. Each tab holds a stack of pages:
--- { title, render(p, tab), actions(h, tab)?, tab? }. actions draw on the
--- right of the title row.
+-- Every feature and every detail page gets its own editor tab. A tab holds a
+-- stack of pages, { title, tab_title?, render(p, tab), actions(h, tab)?, tab? },
+-- for steps like a form that return with ‹ Back. actions draw on the right of
+-- the title row.
 local M = {}
 
 M.roots = {}
@@ -41,8 +42,11 @@ local function render(tab, p)
     return
   end
   local crumbs = {}
-  for i, page in ipairs(tab.stack) do
-    crumbs[i] = page.title
+  for _, title in ipairs(tab.context or {}) do
+    crumbs[#crumbs + 1] = title
+  end
+  for _, page in ipairs(tab.stack) do
+    crumbs[#crumbs + 1] = page.title
   end
   local page = tab.stack[#tab.stack]
   p:hstack({
@@ -66,17 +70,13 @@ local function render(tab, p)
   page.render(p, tab)
 end
 
-function M.open(id)
-  local tab = M.tabs[id]
-  if not tab then
-    tab = { id = id, stack = { M.roots[id]() } }
-    M.tabs[id] = tab
-  end
+-- ttt focuses an open tab with the same id and ignores the rest.
+local function open_tab(tab, title)
   ttt.open_tab({
-    id = id,
-    title = Nav.titles[id],
+    id = tab.id,
+    title = title,
     render = function(p)
-      S.panels[id] = p
+      S.panels[tab.id] = p
       render(tab, p)
     end,
     on_event = function(ev)
@@ -84,8 +84,48 @@ function M.open(id)
         M.back(tab)
       end
     end,
+    on_close = function()
+      S.panels[tab.id] = nil
+      M.tabs[tab.id] = nil
+    end,
   })
+end
+
+-- Opens a feature's tab, or focuses it when it is already open.
+function M.open(id)
+  local tab = M.tabs[id]
+  if not tab then
+    tab = { id = id, stack = { M.roots[id]() } }
+    M.tabs[id] = tab
+  end
+  open_tab(tab, Nav.titles[id])
   return tab
+end
+
+-- Opens a detail page in its own tab, keyed by what it shows, or focuses that
+-- tab when it is already open. The title row keeps the trail it came from.
+function M.show(from, key, page)
+  local id = "page:" .. key
+  local tab = M.tabs[id]
+  if tab then
+    open_tab(tab, page.tab_title or page.title)
+    return tab
+  end
+  local context = {}
+  for _, title in ipairs(from and from.context or {}) do
+    context[#context + 1] = title
+  end
+  for _, p in ipairs(from and from.stack or {}) do
+    context[#context + 1] = p.title
+  end
+  tab = { id = id, stack = { page }, context = context }
+  M.tabs[id] = tab
+  open_tab(tab, page.tab_title or page.title)
+  return tab
+end
+
+function M.close_page(key)
+  ttt.close_tab("page:" .. key)
 end
 
 -- Opens a feature's list filtered to one namespace.
