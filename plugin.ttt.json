@@ -1,0 +1,16 @@
+{
+  "name": "opentdf",
+  "displayName": "OpenTDF",
+  "description": "Browse and manage an OpenTDF platform: namespaces, attributes, actions, key access servers and keys",
+  "version": "0.1.0",
+  "author": "eugenioenko",
+  "entry": "init.lua",
+  "api": 1,
+  "permissions": {
+    "panel.sidebar": true,
+    "panel.editor": true,
+    "commands": true,
+    "storage": true,
+    "network.http": true
+  }
+}
