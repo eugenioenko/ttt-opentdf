@@ -44,6 +44,33 @@ Keys created here use the **Public key only** mode by default: paste the public 
 
 `scripts/seed.sh` fills a local platform with enough namespaces, attributes, values, servers, keys and actions to page through. `scripts/seed-mappings.sh` then adds subject mappings on `acme.com` for the `opentdf` and `opentdf-sdk` clients, so Entitlements and Decision have results. Both read `PLATFORM`, `OIDC`, `CLIENT_ID` and `CLIENT_SECRET`, and default to the local platform. They need `curl`, `jq` and `openssl`.
 
+## Development
+
+ttt loads a plugin from a single Lua file, so the source lives in `src/` as modules and `scripts/build.py` bundles them into `init.lua`. Edit `src/`, never `init.lua`, and rebuild:
+
+```sh
+scripts/build.py           # writes init.lua
+scripts/build.py --check   # fails when init.lua is out of date
+```
+
+A module's name is its path: `src/features/kas/store.lua` is `require("features.kas.store")`, and a folder's `init.lua` is the folder itself, so `src/features/kas/init.lua` is `require("features.kas")`. `ttt.*` modules resolve as usual. The bundle runs `src/main.lua`.
+
+```
+src/
+  main.lua          registers the features, sidebar and commands
+  core/             api client, state, services, utilities
+  components/       generic widgets built on the ttt widget API (tables, forms, dialogs, filters)
+  shared/           pieces several features use (labels, entity picker)
+  app/              router, navigation, sidebar, connection and settings dialogs
+  features/<name>/  one folder per screen: store, commands, pages
+```
+
+A feature exposes `{ id, root }` from its `init.lua`. Its `store` holds the lists and state, `commands` the dialogs and API calls, and each `*_page.lua` renders one page. When two modules need each other (commands that open a detail page, a detail page that runs commands), require the second one inside the function that uses it: a `require` cycle at load time is an error.
+
+Runtime errors point at lines in `init.lua`. Each module starts with a `-- src/…` comment there, so search upward from the line to find the source file.
+
+Format with `stylua src` (settings in `.stylua.toml`).
+
 ## Requirements
 
 The plugin uses widget features that are not in a ttt release yet: the `pager` and `tabs` widgets, `open_tab` IDs, table `on_activate`, `inset`, `loading` and `empty`, list `badge_right` and `inset`, hstack `align`, bordered and titled inputs, `ttt.debounce` and `crypto.base64_*`. Until they ship, build ttt from the `feat/plugin-pager` branch.
