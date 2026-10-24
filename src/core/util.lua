@@ -157,12 +157,4 @@ function U.inactive_style(x)
   return x.active == false and "muted" or "default"
 end
 
-function U.option_entries(options, value)
-  local entries = {}
-  for i, o in ipairs(options) do
-    entries[i] = { label = o.label, command = o.value, checked = o.value == value }
-  end
-  return entries
-end
-
 return U

@@ -502,7 +502,7 @@ function M.new_form(spec)
 end
 
 function M.form_height(form)
-  local h = 3
+  local h = 2
   for _, f in ipairs(form.spec.fields) do
     if not f.show or f.show(form.vals) then
       if f.kind == "multiline" then
@@ -629,11 +629,22 @@ function M.search(h, lv, placeholder, on_search)
   })
 end
 
+-- Menu commands are option positions: ttt ignores menu entries whose command is
+-- empty, and "All …" options use "" as their value.
 function M.dropdown(h, options, value, on_pick)
+  local entries = {}
+  for i, o in ipairs(options) do
+    entries[i] = { label = o.label, command = tostring(i), checked = o.value == value }
+  end
   h:dropdown({
     label = U.option_label(options, value) .. " ▾",
-    entries = U.option_entries(options, value),
-    on_menu = on_pick,
+    entries = entries,
+    on_menu = function(command)
+      local o = options[tonumber(command)]
+      if o then
+        on_pick(o.value)
+      end
+    end,
   })
 end
 
@@ -1356,14 +1367,6 @@ end
 
 function U.inactive_style(x)
   return x.active == false and "muted" or "default"
-end
-
-function U.option_entries(options, value)
-  local entries = {}
-  for i, o in ipairs(options) do
-    entries[i] = { label = o.label, command = o.value, checked = o.value == value }
-  end
-  return entries
 end
 
 return U

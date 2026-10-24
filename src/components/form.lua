@@ -54,7 +54,7 @@ function M.new_form(spec)
 end
 
 function M.form_height(form)
-  local h = 3
+  local h = 2
   for _, f in ipairs(form.spec.fields) do
     if not f.show or f.show(form.vals) then
       if f.kind == "multiline" then
