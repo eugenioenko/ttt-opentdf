@@ -22,7 +22,7 @@ local function fetched(lv, gen, err, data)
   local out = {}
   for _, a in ipairs((data and data.attributes) or {}) do
     for _, v in ipairs(a.values or {}) do
-      out[#out + 1] = { fqn = v.fqn, rule = U.rule(a) }
+      out[#out + 1] = { id = v.id, fqn = v.fqn, rule = U.rule(a) }
     end
   end
   lv.all = out
@@ -53,10 +53,10 @@ end
 
 local function choose(on_pick, r)
   ttt.close_dialog()
-  on_pick(r.fqn)
+  on_pick(r.fqn, r.id)
 end
 
-local function body(lv, on_pick, p)
+local function body(lv, on_pick, hint, p)
   UI.search(p, lv, "Search attributes, e.g. acme or department…", U.bind(search, lv))
   UI.table(p, lv, {
     frame = "Attribute values",
@@ -66,14 +66,16 @@ local function body(lv, on_pick, p)
     row = row,
     on_open = U.bind(choose, on_pick),
   })
-  p:label({ text = "Enter or double-click adds the value.", style = "muted" })
+  p:label({ text = hint, style = "muted" })
 end
 
-function M.open(on_pick)
+-- on_pick receives the value's FQN and ID.
+function M.open(on_pick, title, hint)
   local lv = UI.list("picker", { client = true })
   lv.search = last_search
   fetch(lv)
-  UI.open_dialog("Add Attribute Value", 96, 26, U.bind(body, lv, on_pick))
+  hint = hint or "Enter or double-click adds the value."
+  UI.open_dialog(title or "Add Attribute Value", 96, 26, U.bind(body, lv, on_pick, hint))
 end
 
 return M

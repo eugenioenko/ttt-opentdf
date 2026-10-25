@@ -111,6 +111,14 @@ M.sections = {
       { id = "namespaces", label = "Namespaces", count = true },
       { id = "attributes", label = "Attributes", count = true },
       { id = "actions", label = "Actions", count = true },
+      { id = "resources", label = "Registered Resources", count = true },
+    },
+  },
+  {
+    title = "SUBJECTS",
+    items = {
+      { id = "subject_mappings", label = "Subject Mappings", count = true },
+      { id = "condition_sets", label = "Condition Sets", count = true },
     },
   },
   { title = "KEYS", items = { { id = "kas", label = "KAS & Keys", count = true } } },
@@ -774,7 +782,7 @@ function M.button_box(h, label, on_click, disabled)
 end
 
 function M.kv(entries)
-  local out = { padding_left = 1, margin_top = 1 }
+  local out = { padding_left = 1, margin_top = 1, muted_keys = true }
   for _, e in ipairs(entries) do
     out[#out + 1] = { key = e[1], value = e[2] or "" }
   end
@@ -1130,6 +1138,9 @@ function Api.refresh_counts()
   Api.count("actions", SVC.ACT .. "ListActions")
   Api.count("kas", SVC.KAS .. "ListKeyAccessServers")
   Api.count("keys", SVC.KAS .. "ListKeys")
+  Api.count("resources", SVC.RR .. "ListRegisteredResources")
+  Api.count("subject_mappings", SVC.SM .. "ListSubjectMappings")
+  Api.count("condition_sets", SVC.SM .. "ListSubjectConditionSets")
 end
 
 local function by_label(a, b)
@@ -1227,6 +1238,8 @@ return {
   KAS = "policy.kasregistry.KeyAccessServerRegistryService/",
   ACT = "policy.actions.ActionService/",
   KM = "policy.keymanagement.KeyManagementService/",
+  SM = "policy.subjectmapping.SubjectMappingService/",
+  RR = "policy.registeredresources.RegisteredResourcesService/",
   AUTHZ = "authorization.v2.AuthorizationService/",
 }
 end
@@ -1413,6 +1426,14 @@ function U.host(uri)
   return h
 end
 
+function U.action_names(actions)
+  local names = {}
+  for i, a in ipairs(actions or {}) do
+    names[i] = a.name or U.human(a.standard, "STANDARD_ACTION_"):lower()
+  end
+  return table.concat(names, ", ")
+end
+
 function U.option_label(options, value)
   for _, o in ipairs(options) do
     if o.value == value then
@@ -1463,10 +1484,12 @@ local Api = require("core.api")
 local UI = require("components")
 local Policy = require("shared.policy")
 local Store = require("features.actions.store")
+local NamespaceActions = require("shared.namespace_actions")
 
 local M = {}
 
 local function reload()
+  NamespaceActions.forget()
   UI.load(Store.list, true)
 end
 
@@ -1498,6 +1521,7 @@ end
 
 local function renamed(a, name)
   a.name = name
+  NamespaceActions.forget()
 end
 
 local function rename(a, v, done)
@@ -2162,6 +2186,371 @@ end
 return M
 end
 
+-- src/features/condition_sets/commands.lua ----------------------------------
+__modules["features.condition_sets.commands"] = function()
+local ttt = require("ttt")
+local U = require("core.util")
+local S = require("core.state")
+local SVC = require("core.services")
+local Api = require("core.api")
+local UI = require("components")
+local Router = require("app.router")
+local Policy = require("shared.policy")
+local Conditions = require("shared.conditions")
+local Store = require("features.condition_sets.store")
+
+local M = {}
+
+local function reload()
+  UI.load(Store.list, true)
+  Api.refresh_counts()
+end
+
+local function set_namespace(b, value)
+  b.ns = value
+  S.redraw()
+end
+
+local function namespace_picker(b, h)
+  UI.dropdown(h, UI.with_all("No namespace", S.namespaces), b.ns, U.bind(set_namespace, b))
+end
+
+local function namespace_row(b, h)
+  UI.frame(h, "Namespace", U.bind(namespace_picker, b), { width = 40 })
+  h:label({ text = "" })
+end
+
+local function before(b, p)
+  p:hstack({ height = 3, margin_top = 1, render = U.bind(namespace_row, b) })
+end
+
+local function created(tab, data)
+  ttt.notify("Created condition set " .. Store.short_id(data.subjectConditionSet or {}))
+  Router.back(tab)
+  reload()
+end
+
+-- A builder save: an error stays in the builder, success runs after.
+local function saved(done, after, err, data)
+  done(err)
+  if not err then
+    after(data)
+  end
+end
+
+local function create(tab, b, subject_sets, done)
+  local req = { subjectConditionSet = { subjectSets = subject_sets } }
+  if b.ns ~= "" then
+    req.namespaceId = b.ns
+  end
+  Api.call(SVC.SM .. "CreateSubjectConditionSet", req, U.bind(saved, done, U.bind(created, tab)))
+end
+
+function M.new(tab, ns)
+  local b = Conditions.builder({ submit = "Create", on_cancel = U.bind(Router.back, tab) })
+  b.ns = ns or Store.list.namespace or ""
+  b.opts.before = U.bind(before, b)
+  b.opts.on_save = U.bind(create, tab, b)
+  Router.push(tab, { title = "New Condition Set", render = U.bind(Conditions.render_builder, b) })
+end
+
+local function updated(tab, scs, subject_sets)
+  scs.subjectSets = subject_sets
+  ttt.notify("Saved condition set " .. Store.short_id(scs))
+  Router.back(tab)
+  UI.load(Store.list, true)
+end
+
+local function update(tab, scs, subject_sets, done)
+  local req = { id = scs.id, subjectSets = subject_sets }
+  Api.call(SVC.SM .. "UpdateSubjectConditionSet", req, U.bind(saved, done, U.bind(updated, tab, scs, subject_sets)))
+end
+
+function M.edit(tab, scs)
+  local b = Conditions.builder({ scs = scs, submit = "Save", on_cancel = U.bind(Router.back, tab) })
+  b.opts.on_save = U.bind(update, tab, scs)
+  Router.push(tab, { title = "Edit Conditions", render = U.bind(Conditions.render_builder, b) })
+end
+
+local function deleted(scs)
+  Router.close_page("scs:" .. scs.id)
+  reload()
+end
+
+function M.run(tab, cmd, scs)
+  if cmd == "new" then
+    M.new(tab)
+  elseif not scs then
+    return
+  elseif cmd == "open" then
+    Router.show(tab, "scs:" .. scs.id, require("features.condition_sets.detail_page").page(scs))
+  elseif cmd == "edit" then
+    M.edit(tab, scs)
+  elseif cmd == "labels" then
+    Policy.labels_dialog("condition set", scs, SVC.SM .. "UpdateSubjectConditionSet")
+  elseif cmd == "delete" then
+    UI.confirm(
+      "Delete condition set " .. Store.short_id(scs) .. "? Subject mappings that use it must be deleted first.",
+      SVC.SM .. "DeleteSubjectConditionSet",
+      { id = scs.id },
+      "Deleted condition set " .. Store.short_id(scs),
+      U.bind(deleted, scs)
+    )
+  end
+end
+
+return M
+end
+
+-- src/features/condition_sets/detail_page.lua -------------------------------
+__modules["features.condition_sets.detail_page"] = function()
+local U = require("core.util")
+local S = require("core.state")
+local SVC = require("core.services")
+local Api = require("core.api")
+local UI = require("components")
+local Router = require("app.router")
+local Conditions = require("shared.conditions")
+local Store = require("features.condition_sets.store")
+local Commands = require("features.condition_sets.commands")
+
+local M = {}
+
+local MAPPING_COLUMNS = {
+  { label = "Attribute value" },
+  { label = "Actions", width = 28 },
+  { label = "Created", width = 16 },
+}
+
+local function mapping_row(sm)
+  return { sm.attributeValue and sm.attributeValue.fqn or "", U.action_names(sm.actions), U.created(sm) }
+end
+
+local function mappings_loaded(lv, err, data)
+  lv.loading = false
+  lv.err = err
+  lv.all = (data and data.associatedSubjectMappings) or {}
+  UI.slice(lv)
+  S.redraw()
+end
+
+local function load_mappings(scs, lv)
+  lv.loading = true
+  Api.call(SVC.SM .. "GetSubjectConditionSet", { id = scs.id }, U.bind(mappings_loaded, lv))
+end
+
+local function tabs(lv)
+  local n = lv.loaded and (" (" .. #(lv.all or {}) .. ")") or ""
+  return { { id = "details", label = "Details" }, { id = "mappings", label = "Subject Mappings" .. n } }
+end
+
+local function conditions_body(scs, b)
+  Conditions.view(b, scs)
+end
+
+local function details(p, scs)
+  p:keyvalue(UI.kv({
+    { "Namespace", Store.namespace(scs) },
+    { "Labels", U.labels(scs.metadata) },
+    { "ID", scs.id },
+    { "Created", U.created(scs) },
+    { "Updated", U.updated(scs) },
+  }))
+  UI.frame(p, "Conditions", U.bind(conditions_body, scs), { margin_top = 1 })
+end
+
+local function open_mapping(tab, sm)
+  require("features.subject_mappings.commands").run(tab, "open", sm)
+end
+
+local function mappings(p, tab, lv)
+  UI.table(p, lv, {
+    frame = "Subject mappings using this condition set",
+    noun = "subject mappings",
+    empty = "No subject mappings use this condition set",
+    columns = MAPPING_COLUMNS,
+    row = mapping_row,
+    on_open = U.bind(open_mapping, tab),
+    frame_opts = { margin_top = 1 },
+  })
+end
+
+local function actions(scs, h, tab)
+  h:button({ label = "Edit", on_click = U.bind(Commands.run, tab, "edit", scs) })
+  h:button({ label = "Labels", on_click = U.bind(Commands.run, tab, "labels", scs) })
+  h:button({ label = "Delete", on_click = U.bind(Commands.run, tab, "delete", scs) })
+end
+
+local function render(page, scs, lv, p, tab)
+  if not lv.loaded and not lv.loading then
+    load_mappings(scs, lv)
+  end
+  if Router.tab_strip(p, page, tabs(lv)) == "mappings" then
+    mappings(p, tab, lv)
+  else
+    details(p, scs)
+  end
+end
+
+function M.page(scs)
+  local page = { title = "Condition set " .. Store.short_id(scs) }
+  local lv = UI.sub_list("scs-mappings:" .. scs.id, { client = true })
+  lv.loaded = false
+  page.actions = U.bind(actions, scs)
+  page.render = U.bind(render, page, scs, lv)
+  return page
+end
+
+return M
+end
+
+-- src/features/condition_sets/init.lua --------------------------------------
+__modules["features.condition_sets"] = function()
+return {
+  id = "condition_sets",
+  root = require("features.condition_sets.list_page").page,
+}
+end
+
+-- src/features/condition_sets/list_page.lua ---------------------------------
+__modules["features.condition_sets.list_page"] = function()
+local U = require("core.util")
+local UI = require("components")
+local Conditions = require("shared.conditions")
+local Store = require("features.condition_sets.store")
+local Commands = require("features.condition_sets.commands")
+
+local M = {}
+
+local COLUMNS = {
+  { label = "Conditions" },
+  { label = "Namespace", width = 20 },
+  { label = "ID", width = 8 },
+  { label = "Labels", width = 24 },
+  { label = "Created", width = 16 },
+}
+
+local KEYS = { n = "new", e = "edit", l = "labels", d = "delete" }
+
+local MENU = {
+  { label = "Open", command = "open" },
+  { label = "Edit Conditions", command = "edit" },
+  { label = "Edit Labels", command = "labels" },
+  { label = "Delete", command = "delete" },
+}
+
+local function row(scs)
+  return { Conditions.summary(scs), Store.namespace(scs), Store.short_id(scs), U.labels(scs.metadata), U.created(scs) }
+end
+
+local function filters(lv, h)
+  UI.search(h, lv, "Search labels…")
+  UI.namespace_filter(h, lv)
+end
+
+local function actions(h, tab)
+  h:button({ label = "New", on_click = U.bind(Commands.new, tab) })
+  UI.refresh_button(h, Store.list)
+end
+
+local function render(p, tab)
+  local lv = Store.list
+  UI.ensure(lv)
+  UI.toolbar(p, U.bind(filters, lv))
+  UI.table(p, lv, {
+    frame = "Subject Condition Sets",
+    noun = "condition sets",
+    columns = COLUMNS,
+    row = row,
+    on_open = U.bind(Commands.run, tab, "open"),
+    keys = KEYS,
+    menu = MENU,
+    on_command = U.bind(Commands.run, tab),
+  })
+end
+
+function M.page()
+  return { title = "Condition Sets", actions = actions, render = render }
+end
+
+return M
+end
+
+-- src/features/condition_sets/picker.lua ------------------------------------
+__modules["features.condition_sets.picker"] = function()
+local ttt = require("ttt")
+local U = require("core.util")
+local UI = require("components")
+local Conditions = require("shared.conditions")
+local Store = require("features.condition_sets.store")
+
+local M = {}
+
+local COLUMNS = { { label = "Conditions" }, { label = "Namespace", width = 20 }, { label = "ID", width = 8 } }
+
+local function row(scs)
+  return { Conditions.summary(scs), Store.namespace(scs), Store.short_id(scs) }
+end
+
+local function choose(on_pick, scs)
+  ttt.close_dialog()
+  on_pick(scs)
+end
+
+local function body(lv, on_pick, p)
+  UI.search(p, lv, "Search labels…")
+  UI.table(p, lv, {
+    frame = "Subject condition sets",
+    noun = "condition sets",
+    columns = COLUMNS,
+    row = row,
+    on_open = U.bind(choose, on_pick),
+  })
+  p:label({ text = "Enter or double-click chooses the condition set.", style = "muted" })
+end
+
+function M.open(on_pick)
+  local lv = UI.list("scs-picker", Store.SPEC)
+  UI.load(lv)
+  UI.open_dialog("Choose Condition Set", 110, 26, U.bind(body, lv, on_pick))
+end
+
+return M
+end
+
+-- src/features/condition_sets/store.lua -------------------------------------
+__modules["features.condition_sets.store"] = function()
+local SVC = require("core.services")
+local UI = require("components")
+
+local M = {}
+
+function M.request(lv)
+  if lv.namespace and lv.namespace ~= "" then
+    return { namespaceId = lv.namespace }
+  end
+  return {}
+end
+
+function M.extract(data)
+  return data.subjectConditionSets
+end
+
+M.SPEC = { method = SVC.SM .. "ListSubjectConditionSets", search = true, request = M.request, extract = M.extract }
+
+M.list = UI.list("condition_sets", M.SPEC)
+
+function M.short_id(scs)
+  return (scs.id or ""):sub(1, 8)
+end
+
+function M.namespace(x)
+  return x.namespace and x.namespace.name or ""
+end
+
+return M
+end
+
 -- src/features/decision/init.lua --------------------------------------------
 __modules["features.decision"] = function()
 return {
@@ -2178,7 +2567,7 @@ local S = require("core.state")
 local UI = require("components")
 local Entity = require("shared.entity")
 local Store = require("features.decision.store")
-local Picker = require("features.decision.value_picker")
+local Picker = require("shared.value_picker")
 
 local M = {}
 
@@ -2443,89 +2832,6 @@ function M.permitted(decisions)
     end
   end
   return n
-end
-
-return M
-end
-
--- src/features/decision/value_picker.lua ------------------------------------
-__modules["features.decision.value_picker"] = function()
-local ttt = require("ttt")
-local U = require("core.util")
-local S = require("core.state")
-local SVC = require("core.services")
-local Api = require("core.api")
-local UI = require("components")
-
--- A dialog that searches attributes and lists their values, paged on the
--- client so each page shows values rather than attributes.
-local M = {}
-
-local COLUMNS = { { label = "Attribute value" }, { label = "Rule", width = 9 } }
-
-local last_search = ""
-
-local function fetched(lv, gen, err, data)
-  if gen ~= lv.gen then
-    return
-  end
-  lv.loading = false
-  lv.err = err
-  local out = {}
-  for _, a in ipairs((data and data.attributes) or {}) do
-    for _, v in ipairs(a.values or {}) do
-      out[#out + 1] = { fqn = v.fqn, rule = U.rule(a) }
-    end
-  end
-  lv.all = out
-  lv.offset = 0
-  lv.sel = 1
-  UI.slice(lv)
-  S.redraw()
-end
-
-local function fetch(lv)
-  lv.gen = lv.gen + 1
-  lv.loading = true
-  local req = { pagination = { limit = 100 } }
-  if lv.search ~= "" then
-    req.search = { term = lv.search }
-  end
-  Api.call(SVC.ATTR .. "ListAttributes", req, U.bind(fetched, lv, lv.gen))
-end
-
-local function search(lv)
-  last_search = lv.search
-  fetch(lv)
-end
-
-local function row(r)
-  return { r.fqn, r.rule }
-end
-
-local function choose(on_pick, r)
-  ttt.close_dialog()
-  on_pick(r.fqn)
-end
-
-local function body(lv, on_pick, p)
-  UI.search(p, lv, "Search attributes, e.g. acme or department…", U.bind(search, lv))
-  UI.table(p, lv, {
-    frame = "Attribute values",
-    noun = "values",
-    empty = "No attribute values match",
-    columns = COLUMNS,
-    row = row,
-    on_open = U.bind(choose, on_pick),
-  })
-  p:label({ text = "Enter or double-click adds the value.", style = "muted" })
-end
-
-function M.open(on_pick)
-  local lv = UI.list("picker", { client = true })
-  lv.search = last_search
-  fetch(lv)
-  UI.open_dialog("Add Attribute Value", 96, 26, U.bind(body, lv, on_pick))
 end
 
 return M
@@ -3708,6 +4014,1122 @@ M.list =
 return M
 end
 
+-- src/features/resources/commands.lua ---------------------------------------
+__modules["features.resources.commands"] = function()
+local ttt = require("ttt")
+local U = require("core.util")
+local S = require("core.state")
+local SVC = require("core.services")
+local Api = require("core.api")
+local UI = require("components")
+local Router = require("app.router")
+local Policy = require("shared.policy")
+local Store = require("features.resources.store")
+local ValueForm = require("features.resources.value_form")
+
+local M = {}
+
+local function namespaces()
+  return UI.with_all("No namespace", S.namespaces)
+end
+
+local function reload()
+  UI.load(Store.resources, true)
+  Api.refresh_counts()
+end
+
+local function created(name)
+  ttt.notify("Created resource " .. name)
+  reload()
+end
+
+local function create(v, done)
+  local req = { name = U.trim(v.name), values = U.split(v.values, ",") }
+  if v.namespace ~= "" then
+    req.namespaceId = v.namespace
+  end
+  UI.save(SVC.RR .. "CreateRegisteredResource", req, done, U.bind(created, req.name))
+end
+
+function M.new()
+  UI.dialog({
+    title = "New Registered Resource",
+    submit = "Create",
+    fields = {
+      { key = "name", label = "Name", placeholder = "document-store", required = true },
+      { key = "namespace", label = "Namespace", kind = "enum", options = namespaces, value = "" },
+      { key = "values", label = "Values, comma separated", placeholder = "prod, staging" },
+    },
+    on_submit = create,
+  })
+end
+
+local function renamed(r, name)
+  r.name = name
+end
+
+local function rename(r, v, done)
+  local name = U.trim(v.name)
+  UI.save(SVC.RR .. "UpdateRegisteredResource", { id = r.id, name = name }, done, U.bind(renamed, r, name))
+end
+
+local function deleted(r)
+  Router.close_page("rr:" .. r.id)
+  reload()
+end
+
+function M.resource(tab, cmd, r)
+  if cmd == "new" then
+    M.new()
+  elseif not r then
+    return
+  elseif cmd == "open" then
+    Router.show(tab, "rr:" .. r.id, require("features.resources.detail_page").page(r))
+  elseif cmd == "edit" then
+    UI.dialog({
+      title = "Rename Resource",
+      submit = "Save",
+      fields = { { key = "name", label = "Name", value = r.name, required = true } },
+      on_submit = U.bind(rename, r),
+    })
+  elseif cmd == "labels" then
+    Policy.labels_dialog(r.name, r, SVC.RR .. "UpdateRegisteredResource")
+  elseif cmd == "value" then
+    ValueForm.open(tab, r, nil)
+  elseif cmd == "delete" then
+    UI.confirm(
+      "Delete resource " .. r.name .. " and its values?",
+      SVC.RR .. "DeleteRegisteredResource",
+      { id = r.id },
+      "Deleted " .. r.name,
+      U.bind(deleted, r)
+    )
+  end
+end
+
+local function value_deleted(v)
+  Router.close_page("rrv:" .. v.id)
+  Store.reload_values()
+  UI.load(Store.resources, true)
+end
+
+function M.value(tab, r, cmd, v)
+  if cmd == "new" then
+    ValueForm.open(tab, r, nil)
+  elseif not v then
+    return
+  elseif cmd == "open" then
+    Router.show(tab, "rrv:" .. v.id, require("features.resources.value_page").page(r, v))
+  elseif cmd == "edit" then
+    ValueForm.open(tab, r, v)
+  elseif cmd == "labels" then
+    Policy.labels_dialog(v.value, v, SVC.RR .. "UpdateRegisteredResourceValue")
+  elseif cmd == "delete" then
+    UI.confirm(
+      "Delete value " .. v.value .. "?",
+      SVC.RR .. "DeleteRegisteredResourceValue",
+      { id = v.id },
+      "Deleted " .. v.value,
+      U.bind(value_deleted, v)
+    )
+  end
+end
+
+return M
+end
+
+-- src/features/resources/detail_page.lua ------------------------------------
+__modules["features.resources.detail_page"] = function()
+local U = require("core.util")
+local UI = require("components")
+local Router = require("app.router")
+local Store = require("features.resources.store")
+local Commands = require("features.resources.commands")
+local Values = require("features.resources.values_table")
+
+local M = {}
+
+local function tabs(r)
+  return {
+    { id = "details", label = "Details" },
+    { id = "values", label = "Values (" .. #(r.values or {}) .. ")" },
+  }
+end
+
+local function details(p, r)
+  p:keyvalue(UI.kv({
+    { "Name", r.name },
+    { "Namespace", Store.namespace(r) },
+    { "Values", tostring(#(r.values or {})) },
+    { "Labels", U.labels(r.metadata) },
+    { "ID", r.id },
+    { "Created", U.created(r) },
+    { "Updated", U.updated(r) },
+  }))
+end
+
+local function actions(page, r, h, tab)
+  if page.tab == "values" then
+    h:button({ label = "New Value", on_click = U.bind(Commands.value, tab, r, "new", nil) })
+    return
+  end
+  h:button({ label = "Rename", on_click = U.bind(Commands.resource, tab, "edit", r) })
+  h:button({ label = "Labels", on_click = U.bind(Commands.resource, tab, "labels", r) })
+  h:button({ label = "Delete", on_click = U.bind(Commands.resource, tab, "delete", r) })
+end
+
+local function render(page, r, lv, p, tab)
+  if Router.tab_strip(p, page, tabs(r)) == "values" then
+    UI.ensure(lv)
+    Values.table(p, tab, r, lv, "Values")
+  else
+    details(p, r)
+  end
+end
+
+function M.page(r)
+  local page = { title = r.name }
+  local lv = Store.resource_values(r)
+  page.actions = U.bind(actions, page, r)
+  page.render = U.bind(render, page, r, lv)
+  return page
+end
+
+return M
+end
+
+-- src/features/resources/init.lua -------------------------------------------
+__modules["features.resources"] = function()
+return {
+  id = "resources",
+  root = require("features.resources.list_page").page,
+}
+end
+
+-- src/features/resources/list_page.lua --------------------------------------
+__modules["features.resources.list_page"] = function()
+local U = require("core.util")
+local UI = require("components")
+local Store = require("features.resources.store")
+local Commands = require("features.resources.commands")
+local Values = require("features.resources.values_table")
+
+-- Resources on the left, the selected resource's values on the right.
+local M = {}
+
+local COLUMNS = {
+  { label = "Name" },
+  { label = "Namespace", width = 18 },
+  { label = "Values", width = 6, align = "right" },
+}
+
+local KEYS = { n = "new", v = "value", e = "edit", l = "labels", d = "delete" }
+
+local MENU = {
+  { label = "Open", command = "open" },
+  { label = "New Value", command = "value" },
+  { label = "Rename", command = "edit" },
+  { label = "Edit Labels", command = "labels" },
+  { separator = true },
+  { label = "Delete", command = "delete" },
+}
+
+local function row(r)
+  return { r.name or "", Store.namespace(r), tostring(#(r.values or {})) }
+end
+
+local function resources_table(tab, lv, b)
+  UI.table(b, lv, {
+    noun = "resources",
+    columns = COLUMNS,
+    row = row,
+    on_move = U.bind(Store.values_follow, false),
+    on_page = U.bind(Store.values_follow, true),
+    on_open = U.bind(Commands.resource, tab, "open"),
+    keys = KEYS,
+    menu = MENU,
+    on_command = U.bind(Commands.resource, tab),
+  })
+end
+
+local function values_table(tab, r, b)
+  Values.table(b, tab, r, Store.values)
+end
+
+local function panes(tab, lv, left, h)
+  local r = UI.selected(lv)
+  UI.frame(h, "Registered Resources", U.bind(resources_table, tab, lv), { width = left })
+  UI.frame(h, r and ("Values · " .. r.name) or "Values", U.bind(values_table, tab, r))
+end
+
+local function filters(lv, h)
+  UI.search(h, lv, "Search resources…")
+  UI.namespace_filter(h, lv)
+end
+
+local function new_value(tab)
+  Commands.value(tab, UI.selected(Store.resources), "new")
+end
+
+local function actions(h, tab)
+  h:button({ label = "New", on_click = Commands.new })
+  h:button({ label = "New Value", on_click = U.bind(new_value, tab) })
+  UI.refresh_button(h, Store.resources)
+end
+
+local function render(p, tab)
+  local lv = Store.resources
+  UI.ensure(lv)
+  UI.toolbar(p, U.bind(filters, lv))
+  local left = math.max(36, math.floor(p:size() * 0.4))
+  p:hstack({ render = U.bind(panes, tab, lv, left) })
+end
+
+function M.page()
+  return { title = "Registered Resources", actions = actions, render = render }
+end
+
+return M
+end
+
+-- src/features/resources/store.lua ------------------------------------------
+__modules["features.resources.store"] = function()
+local ttt = require("ttt")
+local U = require("core.util")
+local S = require("core.state")
+local SVC = require("core.services")
+local UI = require("components")
+
+local M = {}
+
+local function request(lv)
+  if lv.namespace and lv.namespace ~= "" then
+    return { namespaceId = lv.namespace }
+  end
+  return {}
+end
+
+local function extract(data)
+  return data.resources
+end
+
+-- lv.resource is the resource whose values the list shows.
+local function values_request(lv)
+  return { resourceId = lv.resource and lv.resource.id }
+end
+
+local function extract_values(data)
+  return data.values
+end
+
+local VALUES_SPEC =
+  { method = SVC.RR .. "ListRegisteredResourceValues", request = values_request, extract = extract_values }
+
+-- The values of the resource selected in M.resources.
+M.values = UI.list("resource-values", VALUES_SPEC)
+
+function M.resource_values(r)
+  local lv = UI.sub_list("rr-values:" .. r.id, VALUES_SPEC)
+  lv.resource = r
+  return lv
+end
+
+local values_later, values_cancel = ttt.debounce(150, U.bind(UI.load, M.values))
+
+function M.values_follow(now)
+  local r = UI.selected(M.resources)
+  if not r then
+    values_cancel()
+    M.values.resource = nil
+    M.values.items, M.values.total, M.values.loaded, M.values.loading = {}, 0, true, false
+    return
+  end
+  if M.values.resource == r and M.values.loaded then
+    return
+  end
+  M.values.resource = r
+  M.values.offset = 0
+  M.values.sel = 1
+  if now then
+    values_cancel()
+    UI.load(M.values)
+    return
+  end
+  M.values.loading = true
+  values_later()
+end
+
+M.resources = UI.list("resources", {
+  method = SVC.RR .. "ListRegisteredResources",
+  search = true,
+  request = request,
+  extract = extract,
+  on_loaded = U.bind(M.values_follow, true),
+})
+
+function M.reload_values()
+  for name, lv in pairs(S.lists) do
+    if name == "resource-values" or name:find("^rr%-values:") then
+      lv.loaded = false
+      if lv.resource then
+        UI.load(lv, true)
+      end
+    end
+  end
+end
+
+function M.namespace(x)
+  return x.namespace and x.namespace.name or ""
+end
+
+function M.grant_text(aav)
+  local action = aav.action and aav.action.name or "?"
+  local value = aav.attributeValue and aav.attributeValue.fqn or "?"
+  return action .. " → " .. value
+end
+
+function M.grants(v)
+  local parts = {}
+  for i, aav in ipairs(v.actionAttributeValues or {}) do
+    parts[i] = M.grant_text(aav)
+  end
+  return table.concat(parts, "; ")
+end
+
+return M
+end
+
+-- src/features/resources/value_form.lua -------------------------------------
+__modules["features.resources.value_form"] = function()
+local ttt = require("ttt")
+local U = require("core.util")
+local S = require("core.state")
+local SVC = require("core.services")
+local Api = require("core.api")
+local UI = require("components")
+local Router = require("app.router")
+local ValuePicker = require("shared.value_picker")
+local NamespaceActions = require("shared.namespace_actions")
+local Store = require("features.resources.store")
+
+-- Creating and editing a resource value and the action and attribute value
+-- pairs it stands for.
+local M = {}
+
+local HINT = "Each pair is an action on an attribute value that this resource value carries in decisions."
+
+local function set_text(f, text)
+  f.value = text
+end
+
+local function pick(pair, key, value)
+  pair[key] = value
+  S.redraw()
+end
+
+local function value_picked(pair, fqn, id)
+  pair.fqn, pair.value_id = fqn, id
+  S.redraw()
+end
+
+local function remove(f, i)
+  table.remove(f.pairs, i)
+  S.redraw()
+end
+
+local function add(f)
+  f.pairs[#f.pairs + 1] = {}
+  S.redraw()
+end
+
+local function action_picker(pair, b)
+  local names = pair.fqn and NamespaceActions.names(NamespaceActions.namespace_id(pair.fqn))
+  if not pair.fqn then
+    b:label({ text = "Choose a value first", style = "muted", padding_left = 1 })
+  elseif not names then
+    b:label({ text = "Loading…", style = "muted", padding_left = 1 })
+  else
+    local options = {}
+    for i, name in ipairs(names) do
+      options[i] = { label = name, value = name }
+    end
+    UI.dropdown(b, options, pair.action_name, U.bind(pick, pair, "action_name"))
+  end
+end
+
+local function value_text(pair, b)
+  b:label({ text = pair.fqn or "Choose an attribute value", style = pair.fqn and "default" or "muted", padding_left = 1 })
+end
+
+local function pair_row(f, i, pair, h)
+  UI.frame(h, "Attribute value", U.bind(value_text, pair))
+  UI.button_box(
+    h,
+    "Choose…",
+    U.bind(
+      ValuePicker.open,
+      U.bind(value_picked, pair),
+      "Choose Attribute Value",
+      "Enter or double-click chooses the value."
+    )
+  )
+  UI.frame(h, "Action", U.bind(action_picker, pair), { width = 24 })
+  UI.button_box(h, "Remove", U.bind(remove, f, i))
+end
+
+local function footer(f, h)
+  h:button({ label = "+ Action and Attribute Value", on_click = U.bind(add, f) })
+end
+
+local function content(f, p)
+  p:input({
+    border = true,
+    title = "Value",
+    value = f.value,
+    placeholder = "prod",
+    autofocus = true,
+    margin_top = 1,
+    on_change = U.bind(set_text, f),
+  })
+  p:label({ text = HINT, style = "muted", padding_left = 1, margin_top = 1 })
+  for i, pair in ipairs(f.pairs) do
+    p:hstack({ height = 3, gap = 1, render = U.bind(pair_row, f, i, pair) })
+  end
+  p:hstack({ height = 1, padding_left = 1, render = U.bind(footer, f) })
+end
+
+local function saved(tab, f, err)
+  f.busy = false
+  f.err = err
+  if err then
+    S.redraw()
+    return
+  end
+  ttt.notify((f.v and "Saved" or "Created") .. " value " .. U.trim(f.value))
+  Router.back(tab)
+  Store.reload_values()
+  UI.load(Store.resources, true)
+end
+
+local function submit(tab, f)
+  if f.busy then
+    return
+  end
+  local value = U.trim(f.value)
+  local grants = {}
+  for i, pair in ipairs(f.pairs) do
+    if not pair.action_name or not pair.value_id then
+      f.err = "Choose an attribute value and an action in pair " .. i
+      S.redraw()
+      return
+    end
+    grants[i] = { actionName = pair.action_name, attributeValueId = pair.value_id }
+  end
+  if value == "" then
+    f.err = "Value is required"
+    S.redraw()
+    return
+  end
+  local path, req
+  if f.v then
+    path = SVC.RR .. "UpdateRegisteredResourceValue"
+    req = { id = f.v.id, value = value, actionAttributeValues = grants }
+  else
+    path = SVC.RR .. "CreateRegisteredResourceValue"
+    req = { resourceId = f.r.id, value = value, actionAttributeValues = grants }
+  end
+  f.busy, f.err = true, nil
+  S.redraw()
+  Api.call(path, req, U.bind(saved, tab, f))
+end
+
+local function buttons(tab, f, h)
+  h:button({ label = "Cancel", on_click = U.bind(Router.back, tab) })
+  h:button({ label = f.v and "Save" or "Create", disabled = f.busy, on_click = U.bind(submit, tab, f) })
+end
+
+local function render(tab, f, p)
+  p:scrollview({ render = U.bind(content, f) })
+  local text, style = "", "muted"
+  if f.err then
+    text, style = "✕ " .. f.err, "danger"
+  elseif f.busy then
+    text = "Saving…"
+  end
+  p:label({ text = text, style = style, padding_left = 1 })
+  p:hstack({ height = 1, gap = 1, align = "right", render = U.bind(buttons, tab, f) })
+end
+
+local function form_state(r, v)
+  local f = { r = r, v = v, value = v and v.value or "", pairs = {} }
+  for i, aav in ipairs(v and v.actionAttributeValues or {}) do
+    f.pairs[i] = {
+      action_name = aav.action and aav.action.name,
+      fqn = aav.attributeValue and aav.attributeValue.fqn,
+      value_id = aav.attributeValue and aav.attributeValue.id,
+    }
+  end
+  return f
+end
+
+function M.open(tab, r, v)
+  if not r then
+    ttt.notify("Select a resource first", "warning")
+    return
+  end
+  local f = form_state(r, v)
+  Router.push(tab, {
+    title = (v and ("Edit " .. v.value) or "New Value") .. " · " .. r.name,
+    render = U.bind(render, tab, f),
+  })
+end
+
+return M
+end
+
+-- src/features/resources/value_page.lua -------------------------------------
+__modules["features.resources.value_page"] = function()
+local U = require("core.util")
+local UI = require("components")
+local Commands = require("features.resources.commands")
+
+local M = {}
+
+local COLUMNS = { { label = "Action", width = 20 }, { label = "Attribute value" } }
+
+local function grants_body(v, b)
+  local rows = {}
+  for i, aav in ipairs(v.actionAttributeValues or {}) do
+    rows[i] = { aav.action and aav.action.name or "", aav.attributeValue and aav.attributeValue.fqn or "" }
+  end
+  b:table({ inset = 1, columns = COLUMNS, rows = rows, empty = "No actions on attribute values" })
+end
+
+local function render(r, v, p)
+  p:keyvalue(UI.kv({
+    { "Value", v.value },
+    { "FQN", v.fqn },
+    { "Resource", r.name },
+    { "Labels", U.labels(v.metadata) },
+    { "ID", v.id },
+    { "Created", U.created(v) },
+    { "Updated", U.updated(v) },
+  }))
+  UI.frame(p, "Actions on attribute values", U.bind(grants_body, v), { margin_top = 1 })
+end
+
+local function actions(r, v, h, tab)
+  h:button({ label = "Edit", on_click = U.bind(Commands.value, tab, r, "edit", v) })
+  h:button({ label = "Labels", on_click = U.bind(Commands.value, tab, r, "labels", v) })
+  h:button({ label = "Delete", on_click = U.bind(Commands.value, tab, r, "delete", v) })
+end
+
+function M.page(r, v)
+  return {
+    title = v.value,
+    tab_title = r.name .. " · " .. v.value,
+    actions = U.bind(actions, r, v),
+    render = U.bind(render, r, v),
+  }
+end
+
+return M
+end
+
+-- src/features/resources/values_table.lua -----------------------------------
+__modules["features.resources.values_table"] = function()
+local U = require("core.util")
+local UI = require("components")
+local Store = require("features.resources.store")
+local Commands = require("features.resources.commands")
+
+-- The values of one resource: shared by the Registered Resources page and a
+-- resource's Values tab.
+local M = {}
+
+local COLUMNS = { { label = "Value", width = 24 }, { label = "Actions on attribute values" } }
+
+local KEYS = { n = "new", e = "edit", l = "labels", d = "delete" }
+
+local MENU = {
+  { label = "Open", command = "open" },
+  { label = "New Value", command = "new" },
+  { label = "Edit", command = "edit" },
+  { label = "Edit Labels", command = "labels" },
+  { label = "Delete", command = "delete" },
+}
+
+local function row(v)
+  return { v.value or "", Store.grants(v) }
+end
+
+function M.table(p, tab, r, lv, frame)
+  UI.table(p, lv, {
+    frame = frame,
+    noun = "values",
+    empty = r and "No values yet" or "Select a resource",
+    columns = COLUMNS,
+    row = row,
+    on_open = U.bind(Commands.value, tab, r, "open"),
+    keys = KEYS,
+    menu = MENU,
+    on_command = U.bind(Commands.value, tab, r),
+  })
+end
+
+return M
+end
+
+-- src/features/subject_mappings/commands.lua --------------------------------
+__modules["features.subject_mappings.commands"] = function()
+local U = require("core.util")
+local SVC = require("core.services")
+local Api = require("core.api")
+local UI = require("components")
+local Router = require("app.router")
+local Policy = require("shared.policy")
+local Store = require("features.subject_mappings.store")
+local Form = require("features.subject_mappings.form")
+
+local M = {}
+
+local function deleted(sm)
+  Router.close_page("sm:" .. sm.id)
+  UI.load(Store.list, true)
+  Api.refresh_counts()
+end
+
+local function open_condition_set(tab, sm)
+  if sm.subjectConditionSet then
+    require("features.condition_sets.commands").run(tab, "open", sm.subjectConditionSet)
+  end
+end
+
+function M.run(tab, cmd, sm)
+  if cmd == "new" then
+    Form.open(tab, nil)
+  elseif not sm then
+    return
+  elseif cmd == "open" then
+    Router.show(tab, "sm:" .. sm.id, require("features.subject_mappings.detail_page").page(sm))
+  elseif cmd == "edit" then
+    Form.open(tab, sm)
+  elseif cmd == "conditions" then
+    open_condition_set(tab, sm)
+  elseif cmd == "labels" then
+    Policy.labels_dialog("subject mapping", sm, SVC.SM .. "UpdateSubjectMapping")
+  elseif cmd == "delete" then
+    UI.confirm(
+      "Delete the subject mapping for " .. Store.fqn(sm) .. "?",
+      SVC.SM .. "DeleteSubjectMapping",
+      { id = sm.id },
+      "Deleted subject mapping",
+      U.bind(deleted, sm)
+    )
+  end
+end
+
+return M
+end
+
+-- src/features/subject_mappings/detail_page.lua -----------------------------
+__modules["features.subject_mappings.detail_page"] = function()
+local U = require("core.util")
+local UI = require("components")
+local Conditions = require("shared.conditions")
+local ConditionSets = require("features.condition_sets.store")
+local Store = require("features.subject_mappings.store")
+local Commands = require("features.subject_mappings.commands")
+
+local M = {}
+
+local function conditions_body(sm, b)
+  Conditions.view(b, sm.subjectConditionSet)
+end
+
+local function render(sm, p)
+  local scs = sm.subjectConditionSet or {}
+  p:keyvalue(UI.kv({
+    { "Attribute value", Store.fqn(sm) },
+    { "Actions", U.action_names(sm.actions) },
+    { "Namespace", Store.namespace(sm) },
+    { "Condition set", scs.id and ConditionSets.short_id(scs) or "" },
+    { "Labels", U.labels(sm.metadata) },
+    { "ID", sm.id },
+    { "Created", U.created(sm) },
+    { "Updated", U.updated(sm) },
+  }))
+  UI.frame(p, "Conditions", U.bind(conditions_body, sm), { margin_top = 1 })
+end
+
+local function actions(sm, h, tab)
+  h:button({ label = "Edit", on_click = U.bind(Commands.run, tab, "edit", sm) })
+  h:button({ label = "Condition Set", on_click = U.bind(Commands.run, tab, "conditions", sm) })
+  h:button({ label = "Labels", on_click = U.bind(Commands.run, tab, "labels", sm) })
+  h:button({ label = "Delete", on_click = U.bind(Commands.run, tab, "delete", sm) })
+end
+
+function M.page(sm)
+  local value = sm.attributeValue and sm.attributeValue.value or "mapping"
+  return {
+    title = Store.fqn(sm),
+    tab_title = "Mapping · " .. value,
+    actions = U.bind(actions, sm),
+    render = U.bind(render, sm),
+  }
+end
+
+return M
+end
+
+-- src/features/subject_mappings/form.lua ------------------------------------
+__modules["features.subject_mappings.form"] = function()
+local ttt = require("ttt")
+local U = require("core.util")
+local S = require("core.state")
+local SVC = require("core.services")
+local Api = require("core.api")
+local UI = require("components")
+local Router = require("app.router")
+local Conditions = require("shared.conditions")
+local ValuePicker = require("shared.value_picker")
+local NamespaceActions = require("shared.namespace_actions")
+local ConditionSets = require("features.condition_sets.store")
+local ConditionSetPicker = require("features.condition_sets.picker")
+local Store = require("features.subject_mappings.store")
+
+-- Creating and editing a subject mapping: the attribute value, its actions and
+-- an existing or new condition set.
+local M = {}
+
+local MODES = {
+  { label = "Use an existing set", value = "existing" },
+  { label = "Create a new set", value = "new" },
+}
+
+local PER_ROW = 5
+
+local function set(f, key, value)
+  f[key] = value
+  S.redraw()
+end
+
+local function toggle(f, name, checked)
+  f.chosen[name] = checked or nil
+end
+
+-- The actions of the chosen value's namespace, or nil while they load.
+local function action_names(f)
+  return NamespaceActions.names(NamespaceActions.namespace_id(f.value_fqn))
+end
+
+local function value_picked(f, fqn, id)
+  f.value_fqn, f.value_id = fqn, id
+  S.redraw()
+end
+
+local function value_text(f, b)
+  b:label({ text = f.value_fqn or "Choose an attribute value", style = f.value_fqn and "default" or "muted", padding_left = 1 })
+end
+
+local function value_row(f, h)
+  UI.frame(h, "Attribute value", U.bind(value_text, f))
+  if not f.sm then
+    UI.button_box(
+      h,
+      "Choose…",
+      U.bind(
+        ValuePicker.open,
+        U.bind(value_picked, f),
+        "Choose Attribute Value",
+        "Enter or double-click chooses the value."
+      )
+    )
+  end
+end
+
+local function checkbox_row(f, names, first, h)
+  for i = first, math.min(first + PER_ROW - 1, #names) do
+    UI.checkbox(h, names[i], f.chosen[names[i]] == true, U.bind(toggle, f, names[i]))
+  end
+end
+
+local function actions_body(f, b)
+  local names, err = action_names(f)
+  if not f.value_fqn then
+    b:label({ text = "Choose an attribute value to see its namespace's actions", style = "muted", padding_left = 1 })
+  elseif err then
+    b:label({ text = "✕ " .. err, style = "danger", padding_left = 1 })
+  elseif not names then
+    b:label({ text = "Loading actions…", style = "muted", padding_left = 1 })
+  else
+    for first = 1, #names, PER_ROW do
+      b:hstack({ height = 1, gap = 2, render = U.bind(checkbox_row, f, names, first) })
+    end
+  end
+end
+
+local function namespace_picker(f, b)
+  UI.dropdown(b, UI.with_all("No namespace", S.namespaces), f.ns, U.bind(set, f, "ns"))
+end
+
+local function mode_picker(f, b)
+  UI.dropdown(b, MODES, f.mode, U.bind(set, f, "mode"))
+end
+
+local function scs_text(f, b)
+  local text = f.scs and Conditions.summary(f.scs) or "Choose a condition set"
+  b:label({ text = text, style = f.scs and "default" or "muted", padding_left = 1 })
+end
+
+local function scs_row(f, h)
+  if not f.sm then
+    UI.frame(h, "Namespace", U.bind(namespace_picker, f), { width = 32 })
+  end
+  UI.frame(h, "Condition set", U.bind(mode_picker, f), { width = 26 })
+  if f.mode == "existing" then
+    UI.frame(h, "Selected", U.bind(scs_text, f))
+    UI.button_box(h, "Choose…", U.bind(ConditionSetPicker.open, U.bind(set, f, "scs")))
+  else
+    h:label({ text = "" })
+  end
+end
+
+local function before(f, p)
+  p:hstack({ height = 3, gap = 1, margin_top = 1, render = U.bind(value_row, f) })
+  local names = action_names(f)
+  local rows = names and math.max(math.ceil(#names / PER_ROW), 1) or 1
+  UI.frame(p, "Actions", U.bind(actions_body, f), { height = rows + 2 })
+  p:hstack({ height = 3, gap = 1, render = U.bind(scs_row, f) })
+end
+
+local function new_sets_shown(f)
+  return f.mode == "new"
+end
+
+local function chosen_actions(f)
+  local out = {}
+  for _, name in ipairs(action_names(f) or {}) do
+    if f.chosen[name] then
+      out[#out + 1] = { name = name }
+    end
+  end
+  return out
+end
+
+local function refetched(sm, err, data)
+  if not err and data.subjectMapping then
+    for k, v in pairs(data.subjectMapping) do
+      sm[k] = v
+    end
+    S.redraw()
+  end
+end
+
+local function saved(tab, f, done, err)
+  done(err)
+  if err then
+    return
+  end
+  ttt.notify((f.sm and "Saved" or "Created") .. " subject mapping for " .. (f.value_fqn or ""))
+  Router.back(tab)
+  UI.load(Store.list, true)
+  UI.load(ConditionSets.list, true)
+  Api.refresh_counts()
+  if f.sm then
+    Api.call(SVC.SM .. "GetSubjectMapping", { id = f.sm.id }, U.bind(refetched, f.sm))
+  end
+end
+
+local function update(tab, f, actions, done, scs_id)
+  local req = { id = f.sm.id, subjectConditionSetId = scs_id, actions = actions }
+  Api.call(SVC.SM .. "UpdateSubjectMapping", req, U.bind(saved, tab, f, done))
+end
+
+local function scs_created(tab, f, actions, done, err, data)
+  if err then
+    return done(err)
+  end
+  update(tab, f, actions, done, data.subjectConditionSet.id)
+end
+
+local function namespace_id(f)
+  if f.sm then
+    return f.sm.namespace and f.sm.namespace.id or ""
+  end
+  return f.ns
+end
+
+local function submit(tab, f, subject_sets, done)
+  local actions = chosen_actions(f)
+  if not f.value_id then
+    return done("Choose an attribute value")
+  elseif #actions == 0 then
+    return done("Choose at least one action")
+  elseif f.mode == "existing" and not f.scs then
+    return done("Choose a condition set")
+  end
+  local ns = namespace_id(f)
+  if f.sm and f.mode == "new" then
+    local req = { subjectConditionSet = { subjectSets = subject_sets } }
+    if ns ~= "" then
+      req.namespaceId = ns
+    end
+    Api.call(SVC.SM .. "CreateSubjectConditionSet", req, U.bind(scs_created, tab, f, actions, done))
+  elseif f.sm then
+    update(tab, f, actions, done, f.scs.id)
+  else
+    local req = { attributeValueId = f.value_id, actions = actions }
+    if f.mode == "new" then
+      req.newSubjectConditionSet = { subjectSets = subject_sets }
+    else
+      req.existingSubjectConditionSetId = f.scs.id
+    end
+    if ns ~= "" then
+      req.namespaceId = ns
+    end
+    Api.call(SVC.SM .. "CreateSubjectMapping", req, U.bind(saved, tab, f, done))
+  end
+end
+
+local function form_state(sm)
+  local f = { sm = sm, chosen = {}, ns = Store.list.namespace or "", mode = sm and "existing" or "new" }
+  if sm then
+    f.value_fqn = Store.fqn(sm)
+    f.value_id = sm.attributeValue and sm.attributeValue.id
+    f.scs = sm.subjectConditionSet
+    for _, a in ipairs(sm.actions or {}) do
+      f.chosen[a.name] = true
+    end
+  end
+  return f
+end
+
+function M.open(tab, sm)
+  local f = form_state(sm)
+  local b = Conditions.builder({
+    submit = sm and "Save" or "Create",
+    on_cancel = U.bind(Router.back, tab),
+    before = U.bind(before, f),
+    show_sets = U.bind(new_sets_shown, f),
+    on_save = U.bind(submit, tab, f),
+  })
+  Router.push(tab, {
+    title = sm and "Edit Subject Mapping" or "New Subject Mapping",
+    render = U.bind(Conditions.render_builder, b),
+  })
+end
+
+return M
+end
+
+-- src/features/subject_mappings/init.lua ------------------------------------
+__modules["features.subject_mappings"] = function()
+return {
+  id = "subject_mappings",
+  root = require("features.subject_mappings.list_page").page,
+}
+end
+
+-- src/features/subject_mappings/list_page.lua -------------------------------
+__modules["features.subject_mappings.list_page"] = function()
+local U = require("core.util")
+local UI = require("components")
+local Conditions = require("shared.conditions")
+local Store = require("features.subject_mappings.store")
+local Commands = require("features.subject_mappings.commands")
+
+local M = {}
+
+local COLUMNS = {
+  { label = "Attribute value" },
+  { label = "Actions", width = 24 },
+  { label = "Conditions", width = 36 },
+  { label = "Created", width = 16 },
+}
+
+local KEYS = { n = "new", e = "edit", c = "conditions", l = "labels", d = "delete" }
+
+local MENU = {
+  { label = "Open", command = "open" },
+  { label = "Edit", command = "edit" },
+  { label = "Edit Labels", command = "labels" },
+  { label = "Open Condition Set", command = "conditions" },
+  { separator = true },
+  { label = "Delete", command = "delete" },
+}
+
+local function row(sm)
+  return { Store.fqn(sm), U.action_names(sm.actions), Conditions.summary(sm.subjectConditionSet), U.created(sm) }
+end
+
+local function filters(lv, h)
+  UI.search(h, lv, "Search attribute values or labels…")
+  UI.namespace_filter(h, lv)
+end
+
+local function actions(h, tab)
+  h:button({ label = "New", on_click = U.bind(Commands.run, tab, "new", nil) })
+  UI.refresh_button(h, Store.list)
+end
+
+local function render(p, tab)
+  local lv = Store.list
+  UI.ensure(lv)
+  UI.toolbar(p, U.bind(filters, lv))
+  UI.table(p, lv, {
+    frame = "Subject Mappings",
+    noun = "subject mappings",
+    columns = COLUMNS,
+    row = row,
+    on_open = U.bind(Commands.run, tab, "open"),
+    keys = KEYS,
+    menu = MENU,
+    on_command = U.bind(Commands.run, tab),
+  })
+end
+
+function M.page()
+  return { title = "Subject Mappings", actions = actions, render = render }
+end
+
+return M
+end
+
+-- src/features/subject_mappings/store.lua -----------------------------------
+__modules["features.subject_mappings.store"] = function()
+local SVC = require("core.services")
+local UI = require("components")
+
+local M = {}
+
+local function request(lv)
+  if lv.namespace and lv.namespace ~= "" then
+    return { namespaceId = lv.namespace }
+  end
+  return {}
+end
+
+local function extract(data)
+  return data.subjectMappings
+end
+
+M.list = UI.list(
+  "subject_mappings",
+  { method = SVC.SM .. "ListSubjectMappings", search = true, request = request, extract = extract }
+)
+
+function M.fqn(sm)
+  return sm.attributeValue and sm.attributeValue.fqn or ""
+end
+
+function M.namespace(sm)
+  return sm.namespace and sm.namespace.name or ""
+end
+
+return M
+end
+
 -- src/main.lua --------------------------------------------------------------
 __modules["main"] = function()
 local ttt = require("ttt")
@@ -3719,7 +5141,17 @@ local Sidebar = require("app.sidebar")
 local Connection = require("app.connection")
 local Settings = require("app.settings")
 
-for _, name in ipairs({ "namespaces", "attributes", "actions", "kas", "entitlements", "decision" }) do
+for _, name in ipairs({
+  "namespaces",
+  "attributes",
+  "actions",
+  "resources",
+  "subject_mappings",
+  "condition_sets",
+  "kas",
+  "entitlements",
+  "decision",
+}) do
   local feature = require("features." .. name)
   Router.register(feature.id, feature.root)
 end
@@ -3764,6 +5196,313 @@ ttt.register({
   },
   commands = commands(),
 })
+end
+
+-- src/shared/conditions.lua -------------------------------------------------
+__modules["shared.conditions"] = function()
+local U = require("core.util")
+local S = require("core.state")
+local UI = require("components")
+
+-- Subject condition sets: the subject sets of a condition set and the groups of
+-- a subject set all have to match; a group's conditions join with AND or OR.
+local M = {}
+
+M.OPERATORS = {
+  { label = "in", value = "SUBJECT_MAPPING_OPERATOR_ENUM_IN" },
+  { label = "not in", value = "SUBJECT_MAPPING_OPERATOR_ENUM_NOT_IN" },
+  { label = "contains", value = "SUBJECT_MAPPING_OPERATOR_ENUM_IN_CONTAINS" },
+}
+
+M.BOOLEANS = {
+  { label = "All of (AND)", value = "CONDITION_BOOLEAN_TYPE_ENUM_AND" },
+  { label = "Any of (OR)", value = "CONDITION_BOOLEAN_TYPE_ENUM_OR" },
+}
+
+M.HINT = "Every subject set and every group must match. Within a group, conditions join with AND or OR."
+
+local function operator_text(op)
+  for _, o in ipairs(M.OPERATORS) do
+    if o.value == op then
+      return o.label
+    end
+  end
+  return U.human(op, "SUBJECT_MAPPING_OPERATOR_ENUM_"):lower()
+end
+
+local function is_or(g)
+  return g.booleanOperator == "CONDITION_BOOLEAN_TYPE_ENUM_OR"
+end
+
+function M.condition_text(c)
+  local values = table.concat(c.subjectExternalValues or {}, ", ")
+  return (c.subjectExternalSelectorValue or "") .. " " .. operator_text(c.operator) .. " [" .. values .. "]"
+end
+
+local function group_text(g)
+  local parts = {}
+  for i, c in ipairs(g.conditions or {}) do
+    parts[i] = M.condition_text(c)
+  end
+  return table.concat(parts, is_or(g) and " or " or " and ")
+end
+
+local function groups(scs)
+  local out = {}
+  for _, set in ipairs((scs and scs.subjectSets) or {}) do
+    for _, g in ipairs(set.conditionGroups or {}) do
+      out[#out + 1] = g
+    end
+  end
+  return out
+end
+
+-- One line for a listing.
+function M.summary(scs)
+  local list = groups(scs)
+  if #list == 1 then
+    return group_text(list[1])
+  end
+  local parts = {}
+  for i, g in ipairs(list) do
+    parts[i] = "(" .. group_text(g) .. ")"
+  end
+  return table.concat(parts, " and ")
+end
+
+function M.counts(scs)
+  local sets = (scs and scs.subjectSets) or {}
+  return #sets, #groups(scs)
+end
+
+-- The nested sets, groups and conditions, one per line.
+function M.view(p, scs)
+  local sets = (scs and scs.subjectSets) or {}
+  if #sets == 0 then
+    p:label({ text = "No conditions", style = "muted", padding_left = 1 })
+    return
+  end
+  for i, set in ipairs(sets) do
+    p:label({ text = "Subject set " .. i, style = "bold", padding_left = 1, margin_top = 1 })
+    for j, g in ipairs(set.conditionGroups or {}) do
+      local join = is_or(g) and "any of" or "all of"
+      p:label({ text = "Group " .. j .. " · " .. join, style = "muted", padding_left = 3 })
+      for _, c in ipairs(g.conditions or {}) do
+        p:label({ text = M.condition_text(c), padding_left = 5 })
+      end
+    end
+  end
+end
+
+-- Builder state: sets of groups of conditions, with values as typed text.
+
+local function new_condition(selector, values)
+  return { selector = selector or "", operator = M.OPERATORS[1].value, values = values or "" }
+end
+
+local function new_group(selector, values)
+  return { op = M.BOOLEANS[1].value, conditions = { new_condition(selector, values) } }
+end
+
+local function new_set(selector, values)
+  return { groups = { new_group(selector, values) } }
+end
+
+local function editable(scs)
+  local sets = {}
+  for i, set in ipairs(scs.subjectSets or {}) do
+    local gs = {}
+    for j, g in ipairs(set.conditionGroups or {}) do
+      local cs = {}
+      for k, c in ipairs(g.conditions or {}) do
+        cs[k] = {
+          selector = c.subjectExternalSelectorValue or "",
+          operator = c.operator or M.OPERATORS[1].value,
+          values = table.concat(c.subjectExternalValues or {}, ", "),
+        }
+      end
+      gs[j] = { op = g.booleanOperator or M.BOOLEANS[1].value, conditions = cs }
+    end
+    sets[i] = { groups = gs }
+  end
+  return sets
+end
+
+-- opts: { scs, submit, on_save(subject_sets, done), on_cancel, before(p)?,
+-- show_sets()? }. When show_sets returns false only before draws, and on_save
+-- gets nil.
+function M.builder(opts)
+  local sets = opts.scs and editable(opts.scs) or {}
+  if #sets == 0 then
+    sets = { new_set(".clientId", S.conn.client_id) }
+  end
+  return { sets = sets, opts = opts, err = nil, busy = false }
+end
+
+local function to_subject_sets(sets)
+  local out = {}
+  for i, set in ipairs(sets) do
+    local gs = {}
+    for j, g in ipairs(set.groups) do
+      local cs = {}
+      for k, c in ipairs(g.conditions) do
+        local where = "set " .. i .. ", group " .. j .. ", condition " .. k
+        if U.trim(c.selector) == "" then
+          return nil, "Enter a selector in " .. where
+        end
+        local values = U.split(c.values, ",")
+        if #values == 0 then
+          return nil, "Enter at least one value in " .. where
+        end
+        cs[k] =
+          { subjectExternalSelectorValue = U.trim(c.selector), operator = c.operator, subjectExternalValues = values }
+      end
+      gs[j] = { booleanOperator = g.op, conditions = cs }
+    end
+    out[i] = { conditionGroups = gs }
+  end
+  return out
+end
+
+local function finished(b, err)
+  b.busy = false
+  b.err = err
+  S.redraw()
+end
+
+local function sets_shown(b)
+  return not b.opts.show_sets or b.opts.show_sets()
+end
+
+local function save(b)
+  if b.busy then
+    return
+  end
+  local subject_sets, err
+  if sets_shown(b) then
+    subject_sets, err = to_subject_sets(b.sets)
+    if not subject_sets then
+      b.err = err
+      S.redraw()
+      return
+    end
+  end
+  b.err = nil
+  b.busy = true
+  b.opts.on_save(subject_sets, U.bind(finished, b))
+  S.redraw()
+end
+
+local function set_field(c, key, value)
+  c[key] = value
+end
+
+local function pick(item, key, value)
+  item[key] = value
+  S.redraw()
+end
+
+local function remove(list, i)
+  table.remove(list, i)
+  S.redraw()
+end
+
+local function add(list, make)
+  list[#list + 1] = make()
+  S.redraw()
+end
+
+local function operator_picker(c, b)
+  UI.dropdown(b, M.OPERATORS, c.operator, U.bind(pick, c, "operator"))
+end
+
+local function condition_row(g, k, c, h)
+  h:input({
+    border = true,
+    title = "Selector",
+    value = c.selector,
+    placeholder = ".emailAddress",
+    on_change = U.bind(set_field, c, "selector"),
+  })
+  UI.frame(h, "Operator", U.bind(operator_picker, c), { width = 14 })
+  h:input({
+    border = true,
+    title = "Values, comma separated",
+    value = c.values,
+    placeholder = "alice@example.com, bob@example.com",
+    on_change = U.bind(set_field, c, "values"),
+  })
+  UI.button_box(h, "Remove", U.bind(remove, g.conditions, k), #g.conditions == 1)
+end
+
+local function group_header(set, j, g, h)
+  h:label({ text = "Match", style = "muted", width = 6 })
+  UI.dropdown(h, M.BOOLEANS, g.op, U.bind(pick, g, "op"))
+  h:label({ text = "" })
+  h:button({ label = "Remove Group", disabled = #set.groups == 1, on_click = U.bind(remove, set.groups, j) })
+end
+
+local function group_footer(g, h)
+  h:button({ label = "+ Condition", on_click = U.bind(add, g.conditions, new_condition) })
+end
+
+local function group_body(set, j, g, p)
+  p:hstack({ height = 1, gap = 1, padding_left = 1, render = U.bind(group_header, set, j, g) })
+  for k, c in ipairs(g.conditions) do
+    p:hstack({ height = 3, gap = 1, render = U.bind(condition_row, g, k, c) })
+  end
+  p:hstack({ height = 1, padding_left = 1, render = U.bind(group_footer, g) })
+end
+
+local function set_header(b, i, set, h)
+  h:label({ text = "Subject set " .. i, style = "bold" })
+  h:button({ label = "Remove Set", disabled = #b.sets == 1, on_click = U.bind(remove, b.sets, i) })
+end
+
+local function set_footer(set, h)
+  h:button({ label = "+ Group", on_click = U.bind(add, set.groups, new_group) })
+end
+
+local function sets_footer(b, h)
+  h:button({ label = "+ Subject Set", on_click = U.bind(add, b.sets, new_set) })
+end
+
+local function buttons(b, h)
+  h:button({ label = "Cancel", on_click = b.opts.on_cancel })
+  h:button({ label = b.opts.submit or "Save", disabled = b.busy, on_click = U.bind(save, b) })
+end
+
+local function content(b, p)
+  if b.opts.before then
+    b.opts.before(p)
+  end
+  if not sets_shown(b) then
+    return
+  end
+  p:label({ text = M.HINT, style = "muted", padding_left = 1, margin_top = 1 })
+  for i, set in ipairs(b.sets) do
+    p:hstack({ height = 1, gap = 1, margin_top = 1, padding_left = 1, render = U.bind(set_header, b, i, set) })
+    for j, g in ipairs(set.groups) do
+      UI.frame(p, "Group " .. j, U.bind(group_body, set, j, g), { margin_left = 2 })
+    end
+    p:hstack({ height = 1, padding_left = 3, render = U.bind(set_footer, set) })
+  end
+  p:hstack({ height = 1, margin_top = 1, padding_left = 1, render = U.bind(sets_footer, b) })
+end
+
+function M.render_builder(b, p)
+  p:scrollview({ render = U.bind(content, b) })
+  local text, style = "", "muted"
+  if b.err then
+    text, style = "✕ " .. b.err, "danger"
+  elseif b.busy then
+    text = "Saving…"
+  end
+  p:label({ text = text, style = style, padding_left = 1 })
+  p:hstack({ height = 1, gap = 1, align = "right", render = U.bind(buttons, b) })
+end
+
+return M
 end
 
 -- src/shared/entity.lua -----------------------------------------------------
@@ -3867,6 +5606,66 @@ end
 return M
 end
 
+-- src/shared/namespace_actions.lua ------------------------------------------
+__modules["shared.namespace_actions"] = function()
+local U = require("core.util")
+local S = require("core.state")
+local SVC = require("core.services")
+local Api = require("core.api")
+local Actions = require("features.actions.store")
+
+-- Action names by namespace, for forms that pair actions with attribute
+-- values: every namespace has its own standard and custom actions.
+local M = {}
+
+local cache = {}
+
+function M.namespace_id(fqn)
+  local host = type(fqn) == "string" and fqn:match("^%a+://([^/]+)")
+  for _, ns in ipairs(S.namespaces) do
+    if ns.label == host then
+      return ns.value
+    end
+  end
+  return nil
+end
+
+local function loaded(ns_id, err, data)
+  local names, seen = {}, {}
+  for _, a in ipairs(err and {} or Actions.extract(data)) do
+    if a.name and not seen[a.name] then
+      seen[a.name] = true
+      names[#names + 1] = a.name
+    end
+  end
+  cache[ns_id] = { names = names, err = err }
+  S.redraw()
+end
+
+-- The namespace's action names, or nil while they load; err when they failed.
+function M.names(ns_id)
+  if not ns_id then
+    return nil
+  end
+  local entry = cache[ns_id]
+  if entry == nil then
+    cache[ns_id] = false
+    Api.call(SVC.ACT .. "ListActions", { namespaceId = ns_id, pagination = { limit = 1000 } }, U.bind(loaded, ns_id))
+    return nil
+  end
+  if entry == false then
+    return nil
+  end
+  return entry.names, entry.err
+end
+
+function M.forget()
+  cache = {}
+end
+
+return M
+end
+
 -- src/shared/policy.lua -----------------------------------------------------
 __modules["shared.policy"] = function()
 local U = require("core.util")
@@ -3921,6 +5720,91 @@ function M.namespace_field(ns)
     ns = S.namespaces[1].value
   end
   return { key = "namespace", label = "Namespace", kind = "enum", value = ns, options = namespaces }
+end
+
+return M
+end
+
+-- src/shared/value_picker.lua -----------------------------------------------
+__modules["shared.value_picker"] = function()
+local ttt = require("ttt")
+local U = require("core.util")
+local S = require("core.state")
+local SVC = require("core.services")
+local Api = require("core.api")
+local UI = require("components")
+
+-- A dialog that searches attributes and lists their values, paged on the
+-- client so each page shows values rather than attributes.
+local M = {}
+
+local COLUMNS = { { label = "Attribute value" }, { label = "Rule", width = 9 } }
+
+local last_search = ""
+
+local function fetched(lv, gen, err, data)
+  if gen ~= lv.gen then
+    return
+  end
+  lv.loading = false
+  lv.err = err
+  local out = {}
+  for _, a in ipairs((data and data.attributes) or {}) do
+    for _, v in ipairs(a.values or {}) do
+      out[#out + 1] = { id = v.id, fqn = v.fqn, rule = U.rule(a) }
+    end
+  end
+  lv.all = out
+  lv.offset = 0
+  lv.sel = 1
+  UI.slice(lv)
+  S.redraw()
+end
+
+local function fetch(lv)
+  lv.gen = lv.gen + 1
+  lv.loading = true
+  local req = { pagination = { limit = 100 } }
+  if lv.search ~= "" then
+    req.search = { term = lv.search }
+  end
+  Api.call(SVC.ATTR .. "ListAttributes", req, U.bind(fetched, lv, lv.gen))
+end
+
+local function search(lv)
+  last_search = lv.search
+  fetch(lv)
+end
+
+local function row(r)
+  return { r.fqn, r.rule }
+end
+
+local function choose(on_pick, r)
+  ttt.close_dialog()
+  on_pick(r.fqn, r.id)
+end
+
+local function body(lv, on_pick, hint, p)
+  UI.search(p, lv, "Search attributes, e.g. acme or department…", U.bind(search, lv))
+  UI.table(p, lv, {
+    frame = "Attribute values",
+    noun = "values",
+    empty = "No attribute values match",
+    columns = COLUMNS,
+    row = row,
+    on_open = U.bind(choose, on_pick),
+  })
+  p:label({ text = hint, style = "muted" })
+end
+
+-- on_pick receives the value's FQN and ID.
+function M.open(on_pick, title, hint)
+  local lv = UI.list("picker", { client = true })
+  lv.search = last_search
+  fetch(lv)
+  hint = hint or "Enter or double-click adds the value."
+  UI.open_dialog(title or "Add Attribute Value", 96, 26, U.bind(body, lv, on_pick, hint))
 end
 
 return M

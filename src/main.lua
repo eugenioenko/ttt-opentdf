@@ -7,7 +7,17 @@ local Sidebar = require("app.sidebar")
 local Connection = require("app.connection")
 local Settings = require("app.settings")
 
-for _, name in ipairs({ "namespaces", "attributes", "actions", "kas", "entitlements", "decision" }) do
+for _, name in ipairs({
+  "namespaces",
+  "attributes",
+  "actions",
+  "resources",
+  "subject_mappings",
+  "condition_sets",
+  "kas",
+  "entitlements",
+  "decision",
+}) do
   local feature = require("features." .. name)
   Router.register(feature.id, feature.root)
 end

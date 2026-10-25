@@ -11,6 +11,9 @@ The **OpenTDF** sidebar panel lists what you can open. Each view opens in an edi
 - **Namespaces**: search, filter by state, create, edit labels, deactivate. A namespace's page has tabs for its attributes and actions.
 - **Attributes**: attributes on the left and the selected attribute's values on the right. Filter by namespace, state or text. Create attributes and values, edit labels, deactivate.
 - **Actions**: standard and custom actions, filtered by namespace. Create, rename, delete.
+- **Registered Resources**: resources on the left and the selected resource's values on the right. Create resources with their values, rename, edit labels, delete. Each value holds the actions on attribute values it stands for in decisions.
+- **Subject Mappings**: which subjects get which actions on an attribute value. Create and edit them with an existing condition set or a new one, change actions, edit labels, delete.
+- **Condition Sets**: subject condition sets, built with nested subject sets, groups and conditions that stack down the page. A condition set's page lists the subject mappings that use it.
 - **KAS & Keys**: key access servers on the left and their keys on the right, or every key under **All keys**. Filter keys by algorithm or text. Create servers and keys, rotate keys, set the base key, and view a key's public PEM.
 - **Entitlements**: the attribute values and actions an entity is entitled to (authorization v2).
 - **Decision**: permit or deny for an entity, an action and a resource's attribute values (authorization v2), either for all values together or for each value separately.
@@ -75,7 +78,7 @@ Format with `stylua src` (settings in `.stylua.toml`).
 
 ## Requirements
 
-The plugin uses widget features that are not in a ttt release yet: the `pager` and `tabs` widgets, `open_tab` IDs and `on_close`, table `on_activate`, `inset`, `loading` and `empty`, list `badge_right` and `inset`, hstack `align`, bordered and titled inputs, `ttt.debounce` and `crypto.base64_*`. Until they ship, build ttt from the `feat/plugin-pager` branch.
+The plugin uses widget features that are not in a ttt release yet: the `pager` and `tabs` widgets, `open_tab` IDs and `on_close`, table `on_activate`, `inset`, `loading` and `empty`, list `badge_right` and `inset`, hstack `align`, keyvalue `muted_keys`, bordered and titled inputs, scroll views that fit their content to their width, `ttt.debounce` and `crypto.base64_*`. Until they ship, build ttt from the `feat/plugin-pager` branch.
 
 ## License
 

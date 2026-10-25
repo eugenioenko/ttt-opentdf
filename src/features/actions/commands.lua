@@ -5,10 +5,12 @@ local Api = require("core.api")
 local UI = require("components")
 local Policy = require("shared.policy")
 local Store = require("features.actions.store")
+local NamespaceActions = require("shared.namespace_actions")
 
 local M = {}
 
 local function reload()
+  NamespaceActions.forget()
   UI.load(Store.list, true)
 end
 
@@ -40,6 +42,7 @@ end
 
 local function renamed(a, name)
   a.name = name
+  NamespaceActions.forget()
 end
 
 local function rename(a, v, done)

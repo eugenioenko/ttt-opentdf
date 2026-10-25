@@ -130,6 +130,9 @@ function Api.refresh_counts()
   Api.count("actions", SVC.ACT .. "ListActions")
   Api.count("kas", SVC.KAS .. "ListKeyAccessServers")
   Api.count("keys", SVC.KAS .. "ListKeys")
+  Api.count("resources", SVC.RR .. "ListRegisteredResources")
+  Api.count("subject_mappings", SVC.SM .. "ListSubjectMappings")
+  Api.count("condition_sets", SVC.SM .. "ListSubjectConditionSets")
 end
 
 local function by_label(a, b)

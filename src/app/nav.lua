@@ -8,6 +8,14 @@ M.sections = {
       { id = "namespaces", label = "Namespaces", count = true },
       { id = "attributes", label = "Attributes", count = true },
       { id = "actions", label = "Actions", count = true },
+      { id = "resources", label = "Registered Resources", count = true },
+    },
+  },
+  {
+    title = "SUBJECTS",
+    items = {
+      { id = "subject_mappings", label = "Subject Mappings", count = true },
+      { id = "condition_sets", label = "Condition Sets", count = true },
     },
   },
   { title = "KEYS", items = { { id = "kas", label = "KAS & Keys", count = true } } },

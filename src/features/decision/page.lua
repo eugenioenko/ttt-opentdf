@@ -3,7 +3,7 @@ local S = require("core.state")
 local UI = require("components")
 local Entity = require("shared.entity")
 local Store = require("features.decision.store")
-local Picker = require("features.decision.value_picker")
+local Picker = require("shared.value_picker")
 
 local M = {}
 

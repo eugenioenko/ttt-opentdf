@@ -37,7 +37,7 @@ function M.button_box(h, label, on_click, disabled)
 end
 
 function M.kv(entries)
-  local out = { padding_left = 1, margin_top = 1 }
+  local out = { padding_left = 1, margin_top = 1, muted_keys = true }
   for _, e in ipairs(entries) do
     out[#out + 1] = { key = e[1], value = e[2] or "" }
   end

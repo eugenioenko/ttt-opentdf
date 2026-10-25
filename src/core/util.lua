@@ -132,6 +132,14 @@ function U.host(uri)
   return h
 end
 
+function U.action_names(actions)
+  local names = {}
+  for i, a in ipairs(actions or {}) do
+    names[i] = a.name or U.human(a.standard, "STANDARD_ACTION_"):lower()
+  end
+  return table.concat(names, ", ")
+end
+
 function U.option_label(options, value)
   for _, o in ipairs(options) do
     if o.value == value then
