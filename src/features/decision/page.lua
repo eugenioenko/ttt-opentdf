@@ -47,14 +47,18 @@ local function remove_resource(st, cmd, i)
   end
 end
 
+local RESOURCE_MENU = { { label = "Remove", command = "remove" } }
+
+local RESOURCE_COLUMNS = { { label = "Attribute value FQN" }, UI.actions_column(RESOURCE_MENU) }
+
 local function resources_body(st, rows, b)
   b:table({
     inset = 1,
-    columns = { { label = "Attribute value FQN" } },
+    columns = RESOURCE_COLUMNS,
     rows = rows,
     empty = "Add the attribute values the resource carries",
     key_commands = { d = "remove", x = "remove" },
-    node_menu = { { label = "Remove", command = "remove" } },
+    node_menu = RESOURCE_MENU,
     on_command = U.bind(remove_resource, st),
   })
 end

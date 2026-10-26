@@ -929,6 +929,9 @@ local Layout = require("components.layout")
 
 local M = {}
 
+local OPEN = "open"
+local ACTIVATE = "__activate"
+
 local function select_row(lv, opts, i)
   lv.sel = i
   if opts.on_move then
@@ -944,6 +947,10 @@ local function activate_row(lv, opts, i)
 end
 
 local function row_command(lv, opts, cmd, i)
+  if cmd == ACTIVATE then
+    activate_row(lv, opts, i)
+    return
+  end
   lv.sel = i
   if opts.on_command then
     opts.on_command(cmd, lv.items[i])
@@ -967,6 +974,64 @@ local function framed(lv, opts, b)
   M.table(b, lv, opts)
 end
 
+local function find_open(menu)
+  for _, e in ipairs(menu) do
+    if e.command == OPEN then
+      return e
+    end
+  end
+end
+
+local function menu_rest(menu)
+  local rest = {}
+  for _, e in ipairs(menu) do
+    local extra_separator = e.separator and (#rest == 0 or rest[#rest].separator)
+    if e.command ~= OPEN and not extra_separator then
+      rest[#rest + 1] = e
+    end
+  end
+  if #rest > 0 and rest[#rest].separator then
+    rest[#rest] = nil
+  end
+  return rest
+end
+
+-- The Open link only activates rows in tables built with M.table.
+function M.actions_column(menu, open_label)
+  local actions = {}
+  local open = menu and find_open(menu)
+  if open or open_label then
+    actions[1] = { label = open and open.label or open_label, command = ACTIVATE }
+  end
+  local rest = menu and menu_rest(menu) or {}
+  if #rest == 1 and #actions == 0 then
+    actions[1] = { label = rest[1].label, command = rest[1].command }
+  elseif #rest > 0 then
+    actions[#actions + 1] = { menu = rest }
+  end
+  if #actions == 0 then
+    return nil
+  end
+  return { label = "", actions = actions }
+end
+
+local function columns(opts)
+  local open_label = opts.open_label
+  if not open_label and not opts.menu and opts.on_open then
+    open_label = "Open"
+  end
+  local col = M.actions_column(opts.menu, open_label)
+  if not col then
+    return opts.columns
+  end
+  local cols = {}
+  for i, c in ipairs(opts.columns) do
+    cols[i] = c
+  end
+  cols[#cols + 1] = col
+  return cols
+end
+
 -- A list view as a table with a pager. The widget sequence stays the same
 -- whatever the list holds, so reconciliation keeps the table focused while
 -- pages load.
@@ -984,7 +1049,7 @@ function M.table(p, lv, opts)
   end
   p:table({
     inset = 1,
-    columns = opts.columns,
+    columns = columns(opts),
     rows = rows,
     row_styles = styles,
     selected = lv.sel,
@@ -2514,6 +2579,7 @@ local function body(lv, on_pick, p)
     columns = COLUMNS,
     row = row,
     on_open = U.bind(choose, on_pick),
+    open_label = "Choose",
   })
   p:label({ text = "Enter or double-click chooses the condition set.", style = "muted" })
 end
@@ -2620,14 +2686,18 @@ local function remove_resource(st, cmd, i)
   end
 end
 
+local RESOURCE_MENU = { { label = "Remove", command = "remove" } }
+
+local RESOURCE_COLUMNS = { { label = "Attribute value FQN" }, UI.actions_column(RESOURCE_MENU) }
+
 local function resources_body(st, rows, b)
   b:table({
     inset = 1,
-    columns = { { label = "Attribute value FQN" } },
+    columns = RESOURCE_COLUMNS,
     rows = rows,
     empty = "Add the attribute values the resource carries",
     key_commands = { d = "remove", x = "remove" },
-    node_menu = { { label = "Remove", command = "remove" } },
+    node_menu = RESOURCE_MENU,
     on_command = U.bind(remove_resource, st),
   })
 end
@@ -2914,6 +2984,7 @@ local function render(p)
     columns = columns(many),
     row = U.bind(row, many),
     on_open = U.bind(decide, st),
+    open_label = "Decide",
   })
 end
 
@@ -3880,6 +3951,7 @@ local function actions_tab(p, acts)
     row = action_row,
     style = Actions.store.style,
     on_open = U.bind(Actions.commands.run, "rename"),
+    open_label = "Rename",
   })
 end
 
@@ -5836,6 +5908,7 @@ local function body(lv, on_pick, hint, p)
     columns = COLUMNS,
     row = row,
     on_open = U.bind(choose, on_pick),
+    open_label = "Add",
   })
   p:label({ text = hint, style = "muted" })
 end

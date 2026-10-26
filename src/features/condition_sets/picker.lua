@@ -25,6 +25,7 @@ local function body(lv, on_pick, p)
     columns = COLUMNS,
     row = row,
     on_open = U.bind(choose, on_pick),
+    open_label = "Choose",
   })
   p:label({ text = "Enter or double-click chooses the condition set.", style = "muted" })
 end

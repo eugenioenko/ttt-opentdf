@@ -59,6 +59,7 @@ local function actions_tab(p, acts)
     row = action_row,
     style = Actions.store.style,
     on_open = U.bind(Actions.commands.run, "rename"),
+    open_label = "Rename",
   })
 end
 

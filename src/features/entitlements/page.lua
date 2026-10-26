@@ -56,6 +56,7 @@ local function render(p)
     columns = columns(many),
     row = U.bind(row, many),
     on_open = U.bind(decide, st),
+    open_label = "Decide",
   })
 end
 

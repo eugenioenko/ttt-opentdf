@@ -65,6 +65,7 @@ local function body(lv, on_pick, hint, p)
     columns = COLUMNS,
     row = row,
     on_open = U.bind(choose, on_pick),
+    open_label = "Add",
   })
   p:label({ text = hint, style = "muted" })
 end
