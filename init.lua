@@ -743,6 +743,7 @@ end
 
 -- src/components/layout.lua -------------------------------------------------
 __modules["components.layout"] = function()
+local text = require("ttt.text")
 local U = require("core.util")
 
 local M = {}
@@ -772,13 +773,13 @@ end
 
 function M.checkbox(h, label, checked, on_change, opts)
   local spec = { label = label, checked = checked, on_change = on_change }
-  h:box(merge({ width = #label + 5, render = U.bind(checkbox_cell, spec) }, opts))
+  h:box(merge({ width = text.width(label) + 5, render = U.bind(checkbox_cell, spec) }, opts))
 end
 
 -- A button aligned with bordered inputs in the same row.
 function M.button_box(h, label, on_click, disabled, style)
   local spec = { label = label, on_click = on_click, disabled = disabled, style = style }
-  local width = #label + 2 + (style == "bracket" and 2 or 0)
+  local width = text.width(label) + 2 + (style == "bracket" and 2 or 0)
   h:box({ padding_top = 1, width = width, render = U.bind(button_cell, spec) })
 end
 
