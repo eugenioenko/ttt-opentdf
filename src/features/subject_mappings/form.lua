@@ -43,7 +43,11 @@ local function value_picked(f, fqn, id)
 end
 
 local function value_text(f, b)
-  b:label({ text = f.value_fqn or "Choose an attribute value", style = f.value_fqn and "default" or "muted", padding_left = 1 })
+  b:label({
+    text = f.value_fqn or "Choose an attribute value",
+    style = f.value_fqn and "default" or "muted",
+    padding_left = 1,
+  })
 end
 
 local function value_row(f, h)
@@ -57,7 +61,9 @@ local function value_row(f, h)
         U.bind(value_picked, f),
         "Choose Attribute Value",
         "Enter or double-click chooses the value."
-      )
+      ),
+      false,
+      "bracket"
     )
   end
 end
@@ -103,7 +109,7 @@ local function scs_row(f, h)
   UI.frame(h, "Condition set", U.bind(mode_picker, f), { width = 26 })
   if f.mode == "existing" then
     UI.frame(h, "Selected", U.bind(scs_text, f))
-    UI.button_box(h, "Choose…", U.bind(ConditionSetPicker.open, U.bind(set, f, "scs")))
+    UI.button_box(h, "Choose…", U.bind(ConditionSetPicker.open, U.bind(set, f, "scs")), false, "bracket")
   else
     h:label({ text = "" })
   end
@@ -146,7 +152,7 @@ local function saved(tab, f, done, err)
     return
   end
   ttt.notify((f.sm and "Saved" or "Created") .. " subject mapping for " .. (f.value_fqn or ""))
-  Router.back(tab)
+  Router.close_form(tab, f.key)
   UI.load(Store.list, true)
   UI.load(ConditionSets.list, true)
   Api.refresh_counts()
@@ -221,14 +227,15 @@ end
 
 function M.open(tab, sm)
   local f = form_state(sm)
+  f.key = sm and ("sm:edit:" .. sm.id) or "sm:new"
   local b = Conditions.builder({
     submit = sm and "Save" or "Create",
-    on_cancel = U.bind(Router.back, tab),
+    on_cancel = U.bind(Router.close_form, tab, f.key),
     before = U.bind(before, f),
     show_sets = U.bind(new_sets_shown, f),
     on_save = U.bind(submit, tab, f),
   })
-  Router.push(tab, {
+  Router.open_form(tab, f.key, {
     title = sm and "Edit Subject Mapping" or "New Subject Mapping",
     render = U.bind(Conditions.render_builder, b),
   })

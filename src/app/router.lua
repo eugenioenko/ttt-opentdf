@@ -5,10 +5,9 @@ local Api = require("core.api")
 local Nav = require("app.nav")
 local Connection = require("app.connection")
 
--- Every feature and every detail page gets its own editor tab. A tab holds a
--- stack of pages, { title, tab_title?, render(p, tab), actions(h, tab)?, tab? },
--- for steps like a form that return with ‹ Back. actions draw on the right of
--- the title row.
+-- Every feature, detail page and form gets its own editor tab. A tab holds a
+-- page, { title, tab_title?, render(p, tab), actions(h, tab)? }, in a stack
+-- of one; actions draw on the right of the title row.
 local M = {}
 
 M.roots = {}
@@ -16,18 +15,6 @@ M.tabs = {}
 
 function M.register(id, root)
   M.roots[id] = root
-end
-
-function M.push(tab, page)
-  tab.stack[#tab.stack + 1] = page
-  S.redraw()
-end
-
-function M.back(tab)
-  if #tab.stack > 1 then
-    tab.stack[#tab.stack] = nil
-    S.redraw()
-  end
 end
 
 function M.reset(tab)
@@ -48,12 +35,8 @@ local function trail(tab)
 end
 
 local function title_row(tab, h)
-  local nested = #tab.stack > 1
   local page = tab.stack[#tab.stack]
-  if nested then
-    h:button({ label = "‹ Back", on_click = U.bind(M.back, tab) })
-  end
-  h:label({ text = table.concat(trail(tab), "  ›  "), style = "bold", padding_left = nested and 0 or 1 })
+  h:label({ text = table.concat(trail(tab), "  ›  "), style = "bold", padding_left = 1 })
   if page.actions then
     page.actions(h, tab)
   end
@@ -70,12 +53,6 @@ local function render(tab, p)
   tab.stack[#tab.stack].render(p, tab)
 end
 
-local function on_event(tab, ev)
-  if ev.type == "key" and ev.key == "Backspace" and not ev.mod then
-    M.back(tab)
-  end
-end
-
 local function forget(tab)
   S.panels[tab.id] = nil
   M.tabs[tab.id] = nil
@@ -87,7 +64,6 @@ local function open_tab(tab, title)
     id = tab.id,
     title = title,
     render = U.bind(render, tab),
-    on_event = U.bind(on_event, tab),
     on_close = U.bind(forget, tab),
   })
 end
@@ -118,6 +94,20 @@ end
 
 function M.close_page(key)
   ttt.close_tab("page:" .. key)
+end
+
+-- Opens a form in its own tab. The same key focuses the open form, keeping
+-- what was typed.
+function M.open_form(from, key, page)
+  return M.show(from, "form:" .. key, page)
+end
+
+-- Closes a form's tab and returns to the tab that opened it.
+function M.close_form(from, key)
+  M.close_page("form:" .. key)
+  if from then
+    ttt.focus_tab(from.id)
+  end
 end
 
 -- Opens a feature's list filtered to one namespace.

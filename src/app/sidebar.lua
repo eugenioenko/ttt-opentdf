@@ -35,8 +35,16 @@ local function open(node)
   end
 end
 
+-- "activate" comes on every click and Enter, also for the row that is already
+-- selected, which on_select misses on older ttt; arrowing only moves.
+local function on_command(command, node)
+  if command == "activate" then
+    open(node)
+  end
+end
+
 local function link_list(items, b)
-  b:list({ items = items, inset = 1, badge_right = true, on_select = open })
+  b:list({ items = items, inset = 1, badge_right = true, on_command = on_command })
 end
 
 local function links(p, items)

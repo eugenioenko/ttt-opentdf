@@ -214,10 +214,11 @@ local function operator_picker(c, b)
   UI.dropdown(b, M.OPERATORS, c.operator, U.bind(pick, c, "operator"))
 end
 
-local function condition_row(g, k, c, h)
+local function condition_row(g, k, c, first, h)
   h:input({
     border = true,
     title = "Selector",
+    autofocus = first,
     value = c.selector,
     placeholder = ".emailAddress",
     on_change = U.bind(set_field, c, "selector"),
@@ -230,44 +231,49 @@ local function condition_row(g, k, c, h)
     placeholder = "alice@example.com, bob@example.com",
     on_change = U.bind(set_field, c, "values"),
   })
-  UI.button_box(h, "Remove", U.bind(remove, g.conditions, k), #g.conditions == 1)
+  UI.button_box(h, "Remove", U.bind(remove, g.conditions, k), #g.conditions == 1, "bracket")
 end
 
 local function group_header(set, j, g, h)
   h:label({ text = "Match", style = "muted", width = 6 })
   UI.dropdown(h, M.BOOLEANS, g.op, U.bind(pick, g, "op"))
   h:label({ text = "" })
-  h:button({ label = "Remove Group", disabled = #set.groups == 1, on_click = U.bind(remove, set.groups, j) })
+  h:button({
+    label = "Remove Group",
+    style = "bracket",
+    disabled = #set.groups == 1,
+    on_click = U.bind(remove, set.groups, j),
+  })
 end
 
 local function group_footer(g, h)
-  h:button({ label = "+ Condition", on_click = U.bind(add, g.conditions, new_condition) })
+  h:button({ label = "+ Condition", style = "bracket", on_click = U.bind(add, g.conditions, new_condition) })
 end
 
-local function group_body(set, j, g, p)
+local function group_body(set, j, g, first, p)
   p:hstack({ height = 1, gap = 1, padding_left = 1, render = U.bind(group_header, set, j, g) })
   for k, c in ipairs(g.conditions) do
-    p:hstack({ height = 3, gap = 1, render = U.bind(condition_row, g, k, c) })
+    p:hstack({ height = 3, gap = 1, render = U.bind(condition_row, g, k, c, first and k == 1) })
   end
   p:hstack({ height = 1, padding_left = 1, render = U.bind(group_footer, g) })
 end
 
 local function set_header(b, i, set, h)
   h:label({ text = "Subject set " .. i, style = "bold" })
-  h:button({ label = "Remove Set", disabled = #b.sets == 1, on_click = U.bind(remove, b.sets, i) })
+  h:button({ label = "Remove Set", style = "bracket", disabled = #b.sets == 1, on_click = U.bind(remove, b.sets, i) })
 end
 
 local function set_footer(set, h)
-  h:button({ label = "+ Group", on_click = U.bind(add, set.groups, new_group) })
+  h:button({ label = "+ Group", style = "bracket", on_click = U.bind(add, set.groups, new_group) })
 end
 
 local function sets_footer(b, h)
-  h:button({ label = "+ Subject Set", on_click = U.bind(add, b.sets, new_set) })
+  h:button({ label = "+ Subject Set", style = "bracket", on_click = U.bind(add, b.sets, new_set) })
 end
 
 local function buttons(b, h)
-  h:button({ label = "Cancel", on_click = b.opts.on_cancel })
-  h:button({ label = b.opts.submit or "Save", disabled = b.busy, on_click = U.bind(save, b) })
+  h:button({ label = "Cancel", style = "muted", on_click = b.opts.on_cancel })
+  h:button({ label = b.opts.submit or "Save", style = "bracket", disabled = b.busy, on_click = U.bind(save, b) })
 end
 
 local function content(b, p)
@@ -281,7 +287,7 @@ local function content(b, p)
   for i, set in ipairs(b.sets) do
     p:hstack({ height = 1, gap = 1, margin_top = 1, padding_left = 1, render = U.bind(set_header, b, i, set) })
     for j, g in ipairs(set.groups) do
-      UI.frame(p, "Group " .. j, U.bind(group_body, set, j, g), { margin_left = 2 })
+      UI.frame(p, "Group " .. j, U.bind(group_body, set, j, g, i == 1 and j == 1), { margin_left = 2 })
     end
     p:hstack({ height = 1, padding_left = 3, render = U.bind(set_footer, set) })
   end

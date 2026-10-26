@@ -14,7 +14,7 @@ end
 local function request_row(st, h)
   Entity.fields(h, st.entity, Store.run)
   UI.checkbox(h, "Full hierarchy", st.comprehensive, U.bind(set_comprehensive, st), { padding_top = 1 })
-  UI.button_box(h, st.busy and "Checking…" or "Get Entitlements", Store.run, st.busy)
+  UI.button_box(h, st.busy and "Checking…" or "Get Entitlements", Store.run, st.busy, "bracket")
 end
 
 local function summary_row(st, width, h)

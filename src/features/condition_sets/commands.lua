@@ -34,9 +34,15 @@ local function before(b, p)
   p:hstack({ height = 3, margin_top = 1, render = U.bind(namespace_row, b) })
 end
 
+local NEW_KEY = "scs:new"
+
+local function edit_key(scs)
+  return "scs:edit:" .. scs.id
+end
+
 local function created(tab, data)
   ttt.notify("Created condition set " .. Store.short_id(data.subjectConditionSet or {}))
-  Router.back(tab)
+  Router.close_form(tab, NEW_KEY)
   reload()
 end
 
@@ -57,17 +63,17 @@ local function create(tab, b, subject_sets, done)
 end
 
 function M.new(tab, ns)
-  local b = Conditions.builder({ submit = "Create", on_cancel = U.bind(Router.back, tab) })
+  local b = Conditions.builder({ submit = "Create", on_cancel = U.bind(Router.close_form, tab, NEW_KEY) })
   b.ns = ns or Store.list.namespace or ""
   b.opts.before = U.bind(before, b)
   b.opts.on_save = U.bind(create, tab, b)
-  Router.push(tab, { title = "New Condition Set", render = U.bind(Conditions.render_builder, b) })
+  Router.open_form(tab, NEW_KEY, { title = "New Condition Set", render = U.bind(Conditions.render_builder, b) })
 end
 
 local function updated(tab, scs, subject_sets)
   scs.subjectSets = subject_sets
   ttt.notify("Saved condition set " .. Store.short_id(scs))
-  Router.back(tab)
+  Router.close_form(tab, edit_key(scs))
   UI.load(Store.list, true)
 end
 
@@ -77,9 +83,10 @@ local function update(tab, scs, subject_sets, done)
 end
 
 function M.edit(tab, scs)
-  local b = Conditions.builder({ scs = scs, submit = "Save", on_cancel = U.bind(Router.back, tab) })
+  local b =
+    Conditions.builder({ scs = scs, submit = "Save", on_cancel = U.bind(Router.close_form, tab, edit_key(scs)) })
   b.opts.on_save = U.bind(update, tab, scs)
-  Router.push(tab, { title = "Edit Conditions", render = U.bind(Conditions.render_builder, b) })
+  Router.open_form(tab, edit_key(scs), { title = "Edit Conditions", render = U.bind(Conditions.render_builder, b) })
 end
 
 local function deleted(scs)

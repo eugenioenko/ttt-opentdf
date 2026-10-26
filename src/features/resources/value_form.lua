@@ -55,7 +55,11 @@ local function action_picker(pair, b)
 end
 
 local function value_text(pair, b)
-  b:label({ text = pair.fqn or "Choose an attribute value", style = pair.fqn and "default" or "muted", padding_left = 1 })
+  b:label({
+    text = pair.fqn or "Choose an attribute value",
+    style = pair.fqn and "default" or "muted",
+    padding_left = 1,
+  })
 end
 
 local function pair_row(f, i, pair, h)
@@ -68,14 +72,16 @@ local function pair_row(f, i, pair, h)
       U.bind(value_picked, pair),
       "Choose Attribute Value",
       "Enter or double-click chooses the value."
-    )
+    ),
+    false,
+    "bracket"
   )
   UI.frame(h, "Action", U.bind(action_picker, pair), { width = 24 })
-  UI.button_box(h, "Remove", U.bind(remove, f, i))
+  UI.button_box(h, "Remove", U.bind(remove, f, i), false, "bracket")
 end
 
 local function footer(f, h)
-  h:button({ label = "+ Action and Attribute Value", on_click = U.bind(add, f) })
+  h:button({ label = "+ Action and Attribute Value", style = "bracket", on_click = U.bind(add, f) })
 end
 
 local function content(f, p)
@@ -103,7 +109,7 @@ local function saved(tab, f, err)
     return
   end
   ttt.notify((f.v and "Saved" or "Created") .. " value " .. U.trim(f.value))
-  Router.back(tab)
+  Router.close_form(tab, f.key)
   Store.reload_values()
   UI.load(Store.resources, true)
 end
@@ -141,8 +147,13 @@ local function submit(tab, f)
 end
 
 local function buttons(tab, f, h)
-  h:button({ label = "Cancel", on_click = U.bind(Router.back, tab) })
-  h:button({ label = f.v and "Save" or "Create", disabled = f.busy, on_click = U.bind(submit, tab, f) })
+  h:button({ label = "Cancel", style = "muted", on_click = U.bind(Router.close_form, tab, f.key) })
+  h:button({
+    label = f.v and "Save" or "Create",
+    style = "bracket",
+    disabled = f.busy,
+    on_click = U.bind(submit, tab, f),
+  })
 end
 
 local function render(tab, f, p)
@@ -175,7 +186,8 @@ function M.open(tab, r, v)
     return
   end
   local f = form_state(r, v)
-  Router.push(tab, {
+  f.key = v and ("rrv:edit:" .. v.id) or ("rrv:new:" .. r.id)
+  Router.open_form(tab, f.key, {
     title = (v and ("Edit " .. v.value) or "New Value") .. " · " .. r.name,
     render = U.bind(render, tab, f),
   })

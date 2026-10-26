@@ -155,10 +155,9 @@ local Api = require("core.api")
 local Nav = require("app.nav")
 local Connection = require("app.connection")
 
--- Every feature and every detail page gets its own editor tab. A tab holds a
--- stack of pages, { title, tab_title?, render(p, tab), actions(h, tab)?, tab? },
--- for steps like a form that return with ‹ Back. actions draw on the right of
--- the title row.
+-- Every feature, detail page and form gets its own editor tab. A tab holds a
+-- page, { title, tab_title?, render(p, tab), actions(h, tab)? }, in a stack
+-- of one; actions draw on the right of the title row.
 local M = {}
 
 M.roots = {}
@@ -166,18 +165,6 @@ M.tabs = {}
 
 function M.register(id, root)
   M.roots[id] = root
-end
-
-function M.push(tab, page)
-  tab.stack[#tab.stack + 1] = page
-  S.redraw()
-end
-
-function M.back(tab)
-  if #tab.stack > 1 then
-    tab.stack[#tab.stack] = nil
-    S.redraw()
-  end
 end
 
 function M.reset(tab)
@@ -198,12 +185,8 @@ local function trail(tab)
 end
 
 local function title_row(tab, h)
-  local nested = #tab.stack > 1
   local page = tab.stack[#tab.stack]
-  if nested then
-    h:button({ label = "‹ Back", on_click = U.bind(M.back, tab) })
-  end
-  h:label({ text = table.concat(trail(tab), "  ›  "), style = "bold", padding_left = nested and 0 or 1 })
+  h:label({ text = table.concat(trail(tab), "  ›  "), style = "bold", padding_left = 1 })
   if page.actions then
     page.actions(h, tab)
   end
@@ -220,12 +203,6 @@ local function render(tab, p)
   tab.stack[#tab.stack].render(p, tab)
 end
 
-local function on_event(tab, ev)
-  if ev.type == "key" and ev.key == "Backspace" and not ev.mod then
-    M.back(tab)
-  end
-end
-
 local function forget(tab)
   S.panels[tab.id] = nil
   M.tabs[tab.id] = nil
@@ -237,7 +214,6 @@ local function open_tab(tab, title)
     id = tab.id,
     title = title,
     render = U.bind(render, tab),
-    on_event = U.bind(on_event, tab),
     on_close = U.bind(forget, tab),
   })
 end
@@ -268,6 +244,20 @@ end
 
 function M.close_page(key)
   ttt.close_tab("page:" .. key)
+end
+
+-- Opens a form in its own tab. The same key focuses the open form, keeping
+-- what was typed.
+function M.open_form(from, key, page)
+  return M.show(from, "form:" .. key, page)
+end
+
+-- Closes a form's tab and returns to the tab that opened it.
+function M.close_form(from, key)
+  M.close_page("form:" .. key)
+  if from then
+    ttt.focus_tab(from.id)
+  end
 end
 
 -- Opens a feature's list filtered to one namespace.
@@ -373,8 +363,16 @@ local function open(node)
   end
 end
 
+-- "activate" comes on every click and Enter, also for the row that is already
+-- selected, which on_select misses on older ttt; arrowing only moves.
+local function on_command(command, node)
+  if command == "activate" then
+    open(node)
+  end
+end
+
 local function link_list(items, b)
-  b:list({ items = items, inset = 1, badge_right = true, on_select = open })
+  b:list({ items = items, inset = 1, badge_right = true, on_command = on_command })
 end
 
 local function links(p, items)
@@ -596,18 +594,20 @@ local function render_field(p, form, f, first)
       on_change = U.bind(set_value, form, f.key),
       on_submit = form.submit,
     })
+    return true
   end
 end
 
 local function buttons(form, on_cancel, h)
-  h:button({ label = "Cancel", on_click = on_cancel })
-  h:button({ label = form.spec.submit or "Save", disabled = form.busy, on_click = form.submit })
+  h:button({ label = "Cancel", style = "muted", on_click = on_cancel })
+  h:button({ label = form.spec.submit or "Save", style = "bracket", disabled = form.busy, on_click = form.submit })
 end
 
 function M.render_form(p, form, on_cancel)
-  for i, f in ipairs(form.spec.fields) do
-    if shown(form, f) then
-      render_field(p, form, f, i == 1)
+  local focused = false
+  for _, f in ipairs(form.spec.fields) do
+    if shown(form, f) and render_field(p, form, f, not focused) then
+      focused = true
     end
   end
   local text, style = "", "muted"
@@ -776,9 +776,10 @@ function M.checkbox(h, label, checked, on_change, opts)
 end
 
 -- A button aligned with bordered inputs in the same row.
-function M.button_box(h, label, on_click, disabled)
-  local spec = { label = label, on_click = on_click, disabled = disabled }
-  h:box({ padding_top = 1, width = #label + 2, render = U.bind(button_cell, spec) })
+function M.button_box(h, label, on_click, disabled, style)
+  local spec = { label = label, on_click = on_click, disabled = disabled, style = style }
+  local width = #label + 2 + (style == "bracket" and 2 or 0)
+  h:box({ padding_top = 1, width = width, render = U.bind(button_cell, spec) })
 end
 
 function M.kv(entries)
@@ -2224,9 +2225,15 @@ local function before(b, p)
   p:hstack({ height = 3, margin_top = 1, render = U.bind(namespace_row, b) })
 end
 
+local NEW_KEY = "scs:new"
+
+local function edit_key(scs)
+  return "scs:edit:" .. scs.id
+end
+
 local function created(tab, data)
   ttt.notify("Created condition set " .. Store.short_id(data.subjectConditionSet or {}))
-  Router.back(tab)
+  Router.close_form(tab, NEW_KEY)
   reload()
 end
 
@@ -2247,17 +2254,17 @@ local function create(tab, b, subject_sets, done)
 end
 
 function M.new(tab, ns)
-  local b = Conditions.builder({ submit = "Create", on_cancel = U.bind(Router.back, tab) })
+  local b = Conditions.builder({ submit = "Create", on_cancel = U.bind(Router.close_form, tab, NEW_KEY) })
   b.ns = ns or Store.list.namespace or ""
   b.opts.before = U.bind(before, b)
   b.opts.on_save = U.bind(create, tab, b)
-  Router.push(tab, { title = "New Condition Set", render = U.bind(Conditions.render_builder, b) })
+  Router.open_form(tab, NEW_KEY, { title = "New Condition Set", render = U.bind(Conditions.render_builder, b) })
 end
 
 local function updated(tab, scs, subject_sets)
   scs.subjectSets = subject_sets
   ttt.notify("Saved condition set " .. Store.short_id(scs))
-  Router.back(tab)
+  Router.close_form(tab, edit_key(scs))
   UI.load(Store.list, true)
 end
 
@@ -2267,9 +2274,10 @@ local function update(tab, scs, subject_sets, done)
 end
 
 function M.edit(tab, scs)
-  local b = Conditions.builder({ scs = scs, submit = "Save", on_cancel = U.bind(Router.back, tab) })
+  local b =
+    Conditions.builder({ scs = scs, submit = "Save", on_cancel = U.bind(Router.close_form, tab, edit_key(scs)) })
   b.opts.on_save = U.bind(update, tab, scs)
-  Router.push(tab, { title = "Edit Conditions", render = U.bind(Conditions.render_builder, b) })
+  Router.open_form(tab, edit_key(scs), { title = "Edit Conditions", render = U.bind(Conditions.render_builder, b) })
 end
 
 local function deleted(scs)
@@ -2591,11 +2599,11 @@ end
 local function request_row(st, h)
   Entity.fields(h, st.entity, Store.run)
   h:box({ width = 18, render = U.bind(action_input, st) })
-  UI.button_box(h, st.busy and "Deciding…" or "Get Decision", Store.run, st.busy)
+  UI.button_box(h, st.busy and "Deciding…" or "Get Decision", Store.run, st.busy, "bracket")
 end
 
 local function options_row(st, h)
-  h:button({ label = "Add Value", on_click = U.bind(Picker.open, Store.add_resource) })
+  h:button({ label = "Add Value", style = "bracket", on_click = U.bind(Picker.open, Store.add_resource) })
   UI.checkbox(h, "Decide each value separately", st.each, U.bind(set_field, st, "each"))
 end
 
@@ -2863,7 +2871,7 @@ end
 local function request_row(st, h)
   Entity.fields(h, st.entity, Store.run)
   UI.checkbox(h, "Full hierarchy", st.comprehensive, U.bind(set_comprehensive, st), { padding_top = 1 })
-  UI.button_box(h, st.busy and "Checking…" or "Get Entitlements", Store.run, st.busy)
+  UI.button_box(h, st.busy and "Checking…" or "Get Entitlements", Store.run, st.busy, "bracket")
 end
 
 local function summary_row(st, width, h)
@@ -3288,9 +3296,16 @@ local function fields(old, rotating)
   }
 end
 
-local function key_saved(tab, key_id, rotating)
+local function form_key(kas, rotating)
+  if rotating then
+    return "key:rotate:" .. (rotating.kasUri or "") .. ":" .. ((rotating.key or {}).keyId or "")
+  end
+  return "key:new:" .. (kas.id or "")
+end
+
+local function key_saved(tab, fkey, key_id, rotating)
   ttt.notify((rotating and "Rotated to " or "Created key ") .. key_id)
-  Router.back(tab)
+  Router.close_form(tab, fkey)
   Store.invalidate_keys()
   UI.load(Store.keys, true)
   UI.load(Store.servers, true)
@@ -3318,11 +3333,11 @@ local function submit(tab, kas, rotating, v, done)
     key.kasId = kas.id
     path, req = SVC.KAS .. "CreateKey", key
   end
-  UI.save(path, req, done, U.bind(key_saved, tab, key.keyId, rotating))
+  UI.save(path, req, done, U.bind(key_saved, tab, form_key(kas, rotating), key.keyId, rotating))
 end
 
 local function form_box(tab, form, b)
-  UI.render_form(b, form, U.bind(Router.back, tab))
+  UI.render_form(b, form, U.bind(Router.close_form, tab, form.key))
 end
 
 local function form_row(tab, form, width, h)
@@ -3347,7 +3362,8 @@ function M.open(tab, kas, rotating)
     fields = fields(old, rotating),
     on_submit = U.bind(submit, tab, kas, rotating),
   })
-  Router.push(tab, {
+  form.key = form_key(kas, rotating)
+  Router.open_form(tab, form.key, {
     title = (rotating and ("Rotate " .. old.keyId) or "New Key") .. " · " .. target,
     render = U.bind(form_page, tab, form),
   })
@@ -4458,7 +4474,11 @@ local function action_picker(pair, b)
 end
 
 local function value_text(pair, b)
-  b:label({ text = pair.fqn or "Choose an attribute value", style = pair.fqn and "default" or "muted", padding_left = 1 })
+  b:label({
+    text = pair.fqn or "Choose an attribute value",
+    style = pair.fqn and "default" or "muted",
+    padding_left = 1,
+  })
 end
 
 local function pair_row(f, i, pair, h)
@@ -4471,14 +4491,16 @@ local function pair_row(f, i, pair, h)
       U.bind(value_picked, pair),
       "Choose Attribute Value",
       "Enter or double-click chooses the value."
-    )
+    ),
+    false,
+    "bracket"
   )
   UI.frame(h, "Action", U.bind(action_picker, pair), { width = 24 })
-  UI.button_box(h, "Remove", U.bind(remove, f, i))
+  UI.button_box(h, "Remove", U.bind(remove, f, i), false, "bracket")
 end
 
 local function footer(f, h)
-  h:button({ label = "+ Action and Attribute Value", on_click = U.bind(add, f) })
+  h:button({ label = "+ Action and Attribute Value", style = "bracket", on_click = U.bind(add, f) })
 end
 
 local function content(f, p)
@@ -4506,7 +4528,7 @@ local function saved(tab, f, err)
     return
   end
   ttt.notify((f.v and "Saved" or "Created") .. " value " .. U.trim(f.value))
-  Router.back(tab)
+  Router.close_form(tab, f.key)
   Store.reload_values()
   UI.load(Store.resources, true)
 end
@@ -4544,8 +4566,13 @@ local function submit(tab, f)
 end
 
 local function buttons(tab, f, h)
-  h:button({ label = "Cancel", on_click = U.bind(Router.back, tab) })
-  h:button({ label = f.v and "Save" or "Create", disabled = f.busy, on_click = U.bind(submit, tab, f) })
+  h:button({ label = "Cancel", style = "muted", on_click = U.bind(Router.close_form, tab, f.key) })
+  h:button({
+    label = f.v and "Save" or "Create",
+    style = "bracket",
+    disabled = f.busy,
+    on_click = U.bind(submit, tab, f),
+  })
 end
 
 local function render(tab, f, p)
@@ -4578,7 +4605,8 @@ function M.open(tab, r, v)
     return
   end
   local f = form_state(r, v)
-  Router.push(tab, {
+  f.key = v and ("rrv:edit:" .. v.id) or ("rrv:new:" .. r.id)
+  Router.open_form(tab, f.key, {
     title = (v and ("Edit " .. v.value) or "New Value") .. " · " .. r.name,
     render = U.bind(render, tab, f),
   })
@@ -4829,7 +4857,11 @@ local function value_picked(f, fqn, id)
 end
 
 local function value_text(f, b)
-  b:label({ text = f.value_fqn or "Choose an attribute value", style = f.value_fqn and "default" or "muted", padding_left = 1 })
+  b:label({
+    text = f.value_fqn or "Choose an attribute value",
+    style = f.value_fqn and "default" or "muted",
+    padding_left = 1,
+  })
 end
 
 local function value_row(f, h)
@@ -4843,7 +4875,9 @@ local function value_row(f, h)
         U.bind(value_picked, f),
         "Choose Attribute Value",
         "Enter or double-click chooses the value."
-      )
+      ),
+      false,
+      "bracket"
     )
   end
 end
@@ -4889,7 +4923,7 @@ local function scs_row(f, h)
   UI.frame(h, "Condition set", U.bind(mode_picker, f), { width = 26 })
   if f.mode == "existing" then
     UI.frame(h, "Selected", U.bind(scs_text, f))
-    UI.button_box(h, "Choose…", U.bind(ConditionSetPicker.open, U.bind(set, f, "scs")))
+    UI.button_box(h, "Choose…", U.bind(ConditionSetPicker.open, U.bind(set, f, "scs")), false, "bracket")
   else
     h:label({ text = "" })
   end
@@ -4932,7 +4966,7 @@ local function saved(tab, f, done, err)
     return
   end
   ttt.notify((f.sm and "Saved" or "Created") .. " subject mapping for " .. (f.value_fqn or ""))
-  Router.back(tab)
+  Router.close_form(tab, f.key)
   UI.load(Store.list, true)
   UI.load(ConditionSets.list, true)
   Api.refresh_counts()
@@ -5007,14 +5041,15 @@ end
 
 function M.open(tab, sm)
   local f = form_state(sm)
+  f.key = sm and ("sm:edit:" .. sm.id) or "sm:new"
   local b = Conditions.builder({
     submit = sm and "Save" or "Create",
-    on_cancel = U.bind(Router.back, tab),
+    on_cancel = U.bind(Router.close_form, tab, f.key),
     before = U.bind(before, f),
     show_sets = U.bind(new_sets_shown, f),
     on_save = U.bind(submit, tab, f),
   })
-  Router.push(tab, {
+  Router.open_form(tab, f.key, {
     title = sm and "Edit Subject Mapping" or "New Subject Mapping",
     render = U.bind(Conditions.render_builder, b),
   })
@@ -5416,10 +5451,11 @@ local function operator_picker(c, b)
   UI.dropdown(b, M.OPERATORS, c.operator, U.bind(pick, c, "operator"))
 end
 
-local function condition_row(g, k, c, h)
+local function condition_row(g, k, c, first, h)
   h:input({
     border = true,
     title = "Selector",
+    autofocus = first,
     value = c.selector,
     placeholder = ".emailAddress",
     on_change = U.bind(set_field, c, "selector"),
@@ -5432,44 +5468,49 @@ local function condition_row(g, k, c, h)
     placeholder = "alice@example.com, bob@example.com",
     on_change = U.bind(set_field, c, "values"),
   })
-  UI.button_box(h, "Remove", U.bind(remove, g.conditions, k), #g.conditions == 1)
+  UI.button_box(h, "Remove", U.bind(remove, g.conditions, k), #g.conditions == 1, "bracket")
 end
 
 local function group_header(set, j, g, h)
   h:label({ text = "Match", style = "muted", width = 6 })
   UI.dropdown(h, M.BOOLEANS, g.op, U.bind(pick, g, "op"))
   h:label({ text = "" })
-  h:button({ label = "Remove Group", disabled = #set.groups == 1, on_click = U.bind(remove, set.groups, j) })
+  h:button({
+    label = "Remove Group",
+    style = "bracket",
+    disabled = #set.groups == 1,
+    on_click = U.bind(remove, set.groups, j),
+  })
 end
 
 local function group_footer(g, h)
-  h:button({ label = "+ Condition", on_click = U.bind(add, g.conditions, new_condition) })
+  h:button({ label = "+ Condition", style = "bracket", on_click = U.bind(add, g.conditions, new_condition) })
 end
 
-local function group_body(set, j, g, p)
+local function group_body(set, j, g, first, p)
   p:hstack({ height = 1, gap = 1, padding_left = 1, render = U.bind(group_header, set, j, g) })
   for k, c in ipairs(g.conditions) do
-    p:hstack({ height = 3, gap = 1, render = U.bind(condition_row, g, k, c) })
+    p:hstack({ height = 3, gap = 1, render = U.bind(condition_row, g, k, c, first and k == 1) })
   end
   p:hstack({ height = 1, padding_left = 1, render = U.bind(group_footer, g) })
 end
 
 local function set_header(b, i, set, h)
   h:label({ text = "Subject set " .. i, style = "bold" })
-  h:button({ label = "Remove Set", disabled = #b.sets == 1, on_click = U.bind(remove, b.sets, i) })
+  h:button({ label = "Remove Set", style = "bracket", disabled = #b.sets == 1, on_click = U.bind(remove, b.sets, i) })
 end
 
 local function set_footer(set, h)
-  h:button({ label = "+ Group", on_click = U.bind(add, set.groups, new_group) })
+  h:button({ label = "+ Group", style = "bracket", on_click = U.bind(add, set.groups, new_group) })
 end
 
 local function sets_footer(b, h)
-  h:button({ label = "+ Subject Set", on_click = U.bind(add, b.sets, new_set) })
+  h:button({ label = "+ Subject Set", style = "bracket", on_click = U.bind(add, b.sets, new_set) })
 end
 
 local function buttons(b, h)
-  h:button({ label = "Cancel", on_click = b.opts.on_cancel })
-  h:button({ label = b.opts.submit or "Save", disabled = b.busy, on_click = U.bind(save, b) })
+  h:button({ label = "Cancel", style = "muted", on_click = b.opts.on_cancel })
+  h:button({ label = b.opts.submit or "Save", style = "bracket", disabled = b.busy, on_click = U.bind(save, b) })
 end
 
 local function content(b, p)
@@ -5483,7 +5524,7 @@ local function content(b, p)
   for i, set in ipairs(b.sets) do
     p:hstack({ height = 1, gap = 1, margin_top = 1, padding_left = 1, render = U.bind(set_header, b, i, set) })
     for j, g in ipairs(set.groups) do
-      UI.frame(p, "Group " .. j, U.bind(group_body, set, j, g), { margin_left = 2 })
+      UI.frame(p, "Group " .. j, U.bind(group_body, set, j, g, i == 1 and j == 1), { margin_left = 2 })
     end
     p:hstack({ height = 1, padding_left = 3, render = U.bind(set_footer, set) })
   end

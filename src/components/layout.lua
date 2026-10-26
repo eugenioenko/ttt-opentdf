@@ -31,9 +31,10 @@ function M.checkbox(h, label, checked, on_change, opts)
 end
 
 -- A button aligned with bordered inputs in the same row.
-function M.button_box(h, label, on_click, disabled)
-  local spec = { label = label, on_click = on_click, disabled = disabled }
-  h:box({ padding_top = 1, width = #label + 2, render = U.bind(button_cell, spec) })
+function M.button_box(h, label, on_click, disabled, style)
+  local spec = { label = label, on_click = on_click, disabled = disabled, style = style }
+  local width = #label + 2 + (style == "bracket" and 2 or 0)
+  h:box({ padding_top = 1, width = width, render = U.bind(button_cell, spec) })
 end
 
 function M.kv(entries)

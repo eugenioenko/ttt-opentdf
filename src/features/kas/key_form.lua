@@ -46,9 +46,16 @@ local function fields(old, rotating)
   }
 end
 
-local function key_saved(tab, key_id, rotating)
+local function form_key(kas, rotating)
+  if rotating then
+    return "key:rotate:" .. (rotating.kasUri or "") .. ":" .. ((rotating.key or {}).keyId or "")
+  end
+  return "key:new:" .. (kas.id or "")
+end
+
+local function key_saved(tab, fkey, key_id, rotating)
   ttt.notify((rotating and "Rotated to " or "Created key ") .. key_id)
-  Router.back(tab)
+  Router.close_form(tab, fkey)
   Store.invalidate_keys()
   UI.load(Store.keys, true)
   UI.load(Store.servers, true)
@@ -76,11 +83,11 @@ local function submit(tab, kas, rotating, v, done)
     key.kasId = kas.id
     path, req = SVC.KAS .. "CreateKey", key
   end
-  UI.save(path, req, done, U.bind(key_saved, tab, key.keyId, rotating))
+  UI.save(path, req, done, U.bind(key_saved, tab, form_key(kas, rotating), key.keyId, rotating))
 end
 
 local function form_box(tab, form, b)
-  UI.render_form(b, form, U.bind(Router.back, tab))
+  UI.render_form(b, form, U.bind(Router.close_form, tab, form.key))
 end
 
 local function form_row(tab, form, width, h)
@@ -105,7 +112,8 @@ function M.open(tab, kas, rotating)
     fields = fields(old, rotating),
     on_submit = U.bind(submit, tab, kas, rotating),
   })
-  Router.push(tab, {
+  form.key = form_key(kas, rotating)
+  Router.open_form(tab, form.key, {
     title = (rotating and ("Rotate " .. old.keyId) or "New Key") .. " · " .. target,
     render = U.bind(form_page, tab, form),
   })

@@ -27,11 +27,11 @@ end
 local function request_row(st, h)
   Entity.fields(h, st.entity, Store.run)
   h:box({ width = 18, render = U.bind(action_input, st) })
-  UI.button_box(h, st.busy and "Deciding…" or "Get Decision", Store.run, st.busy)
+  UI.button_box(h, st.busy and "Deciding…" or "Get Decision", Store.run, st.busy, "bracket")
 end
 
 local function options_row(st, h)
-  h:button({ label = "Add Value", on_click = U.bind(Picker.open, Store.add_resource) })
+  h:button({ label = "Add Value", style = "bracket", on_click = U.bind(Picker.open, Store.add_resource) })
   UI.checkbox(h, "Decide each value separately", st.each, U.bind(set_field, st, "each"))
 end
 

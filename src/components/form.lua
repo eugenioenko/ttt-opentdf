@@ -107,18 +107,20 @@ local function render_field(p, form, f, first)
       on_change = U.bind(set_value, form, f.key),
       on_submit = form.submit,
     })
+    return true
   end
 end
 
 local function buttons(form, on_cancel, h)
-  h:button({ label = "Cancel", on_click = on_cancel })
-  h:button({ label = form.spec.submit or "Save", disabled = form.busy, on_click = form.submit })
+  h:button({ label = "Cancel", style = "muted", on_click = on_cancel })
+  h:button({ label = form.spec.submit or "Save", style = "bracket", disabled = form.busy, on_click = form.submit })
 end
 
 function M.render_form(p, form, on_cancel)
-  for i, f in ipairs(form.spec.fields) do
-    if shown(form, f) then
-      render_field(p, form, f, i == 1)
+  local focused = false
+  for _, f in ipairs(form.spec.fields) do
+    if shown(form, f) and render_field(p, form, f, not focused) then
+      focused = true
     end
   end
   local text, style = "", "muted"
