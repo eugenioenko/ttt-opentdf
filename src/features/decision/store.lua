@@ -16,6 +16,14 @@ M.state = {
   result = nil,
 }
 
+function M.reset()
+  M.state.entity = Entity.new()
+  M.state.resources = {}
+  M.state.busy = false
+  M.state.err = nil
+  M.state.result = nil
+end
+
 -- Prefills the form, for example from an entitlement row.
 function M.prefill(entity, fqn)
   M.state.entity = { kind = entity.kind, value = entity.value }

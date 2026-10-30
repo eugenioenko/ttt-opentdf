@@ -2,10 +2,14 @@ local storage = require("ttt.storage")
 
 local S = {}
 
-S.conn = storage.get("connection") or {}
-S.conn.url = S.conn.url or "http://localhost:8080"
-S.conn.client_id = S.conn.client_id or "opentdf"
-S.conn.client_secret = S.conn.client_secret or ""
+local Connections = require("core.connections")
+local active = Connections.find(Connections.active_id)
+S.conn = active and Connections.credentials(active)
+  or {
+    url = "http://localhost:8080",
+    client_id = "opentdf",
+    client_secret = "",
+  }
 S.settings = storage.get("settings") or {}
 S.page_size = tonumber(S.settings.page_size) or 50
 S.status = "idle"

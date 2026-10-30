@@ -26,71 +26,262 @@ end
 -- src/app/connection.lua ----------------------------------------------------
 __modules["app.connection"] = function()
 local ttt = require("ttt")
-local storage = require("ttt.storage")
 local U = require("core.util")
 local S = require("core.state")
 local Api = require("core.api")
+local Connections = require("core.connections")
 local UI = require("components")
+local Form = require("components.form")
 
 local M = {}
+local secrets = {}
 
-local function connected(done, err)
-  if err then
-    return done(err)
-  end
-  storage.set("connection", S.conn)
-  ttt.notify("Connected to " .. S.conn.url)
-  done()
+local function show_connections()
+  ttt.close_dialog()
+  M.dialog()
 end
 
-local function connect(v, done)
-  local url = U.trim(v.url):gsub("/+$", "")
-  S.conn = { url = url, client_id = U.trim(v.client_id), client_secret = v.client_secret }
+local function form_body(form, p)
+  Form.render_form(p, form, show_connections)
+end
+
+local function connected(done, err)
+  if not err then
+    ttt.notify("Connected to " .. S.conn.url)
+  end
+  if done then
+    done(err)
+  elseif err then
+    ttt.notify(err, "error")
+  end
+end
+
+local function reset_results()
+  require("features.decision.store").reset()
+  require("features.entitlements.store").reset()
+end
+
+local function reset_views()
+  require("app.router").close_all()
+  reset_results()
+  for _, lv in pairs(S.lists) do
+    lv.offset = 0
+    lv.sel = 1
+    lv.namespace = nil
+    lv.attr = nil
+  end
+end
+
+local function connect(item, secret, done)
+  if Connections.active_id ~= item.id then
+    reset_views()
+  end
+  reset_results()
+  Api.disconnect()
+  S.conn = Connections.credentials(item, secret)
+  Connections.active_id = item.id
+  Connections.persist()
   Api.connect(U.bind(connected, done))
 end
 
-function M.dialog()
+local function with_secret(item, values, done)
+  connect(item, values.client_secret, done)
+end
+
+function M.connect(item)
+  item = item or Connections.find(Connections.active_id)
+  if not item then
+    return M.dialog()
+  end
+  local secret = secrets[item.id] or item.client_secret
+  if secret and secret ~= "" then
+    ttt.close_dialog()
+    return connect(item, secret)
+  end
+  ttt.close_dialog()
   UI.dialog({
-    title = "OpenTDF Connection",
+    title = "Connect to " .. item.name,
     submit = "Connect",
-    width = 70,
-    fields = {
-      {
-        key = "url",
-        label = "Platform URL",
-        value = S.conn.url,
-        required = true,
-        placeholder = "http://localhost:8080",
-      },
-      { key = "client_id", label = "Client ID", value = S.conn.client_id, required = true, placeholder = "opentdf" },
-      {
-        key = "client_secret",
-        label = "Client secret",
-        value = S.conn.client_secret,
-        password = true,
-        required = true,
-      },
-    },
-    on_submit = connect,
+    width = 64,
+    fields = { { key = "client_secret", label = "Client secret", password = true, required = true } },
+    on_submit = U.bind(with_secret, item),
   })
 end
 
-local function buttons(h)
-  h:button({ label = "Connection…", on_click = M.dialog })
-  if S.configured() then
-    h:button({ label = "Retry", on_click = Api.connect })
+function M.disconnect()
+  reset_results()
+  secrets[Connections.active_id or ""] = nil
+  Api.disconnect()
+end
+
+local function save(id, values, done)
+  local item = Connections.save(id, values)
+  secrets[item.id] = values.client_secret ~= "" and values.client_secret or nil
+  if Connections.active_id == item.id then
+    reset_views()
+    Api.disconnect()
+    S.conn = Connections.credentials(item)
+  end
+  done()
+end
+
+function M.edit(item)
+  ttt.close_dialog()
+  item = item or {}
+  local form = Form.new_form({
+    title = item.id and "Edit Connection" or "Add Connection",
+    submit = "Save",
+    fields = {
+      { key = "name", label = "Name", value = item.name, required = true, placeholder = "Local development" },
+      { key = "url", label = "Platform URL", value = item.url or "http://localhost:8080", required = true },
+      { key = "client_id", label = "Client ID", value = item.client_id or "opentdf", required = true },
+      {
+        key = "client_secret",
+        label = "Client secret (optional)",
+        value = secrets[item.id] or item.client_secret,
+        password = true,
+      },
+      {
+        key = "remember_secret",
+        label = "Save client secret",
+        kind = "checkbox",
+        value = item.client_secret ~= nil and item.client_secret ~= "",
+      },
+    },
+    on_submit = U.bind(save, item.id),
+    on_done = show_connections,
+  })
+  UI.open_dialog(form.spec.title, 70, Form.form_height(form), U.bind(form_body, form))
+end
+
+local function deleted(item)
+  if Connections.active_id == item.id then
+    reset_views()
+    M.disconnect()
+    S.conn = { url = "http://localhost:8080", client_id = "opentdf", client_secret = "" }
+  end
+  secrets[item.id] = nil
+  Connections.delete(item.id)
+  if #Connections.items > 0 then
+    M.dialog()
+  end
+  S.redraw()
+end
+
+local function delete(item)
+  ttt.close_dialog()
+  ttt.confirm('Delete connection "' .. item.name .. '"?', U.bind(deleted, item))
+end
+
+local function row_command(command, i)
+  local item = Connections.items[i]
+  if not item then
+    return
+  end
+  if command == "connect" then
+    M.connect(item)
+  elseif command == "edit" then
+    M.edit(item)
+  elseif command == "delete" then
+    delete(item)
   end
 end
 
--- Shown in a tab while there is no working connection.
+local function add()
+  M.edit()
+end
+
+local function select_connection(dialog, i)
+  dialog.selected = i
+  S.redraw()
+end
+
+local function connect_selected(dialog)
+  local item = Connections.items[dialog.selected]
+  if item then
+    M.connect(item)
+  end
+end
+
+local function manager_toolbar(h)
+  h:button({ label = "New Connection", on_click = add })
+end
+
+local function manager_buttons(dialog, h)
+  h:button({ label = "Close", style = "muted", on_click = ttt.close_dialog })
+  h:button({
+    label = "Connect",
+    disabled = Connections.items[dialog.selected] == nil,
+    on_click = U.bind(connect_selected, dialog),
+  })
+end
+
+local function manager(dialog, p)
+  p:hstack({ height = 1, align = "right", margin_bottom = 1, render = manager_toolbar })
+  local rows, styles = {}, {}
+  for i, item in ipairs(Connections.items) do
+    local name = item.name
+    if item.id == Connections.active_id and S.status == "ok" then
+      name = "● " .. name
+    end
+    styles[i] = i == dialog.selected and "selected" or "default"
+    rows[i] = {
+      name,
+      item.url,
+      item.client_id,
+      item.client_secret and item.client_secret ~= "" and "Saved" or "Ask on connect",
+    }
+  end
+  p:table({
+    inset = 1,
+    columns = {
+      { label = "Name", min_width = 12 },
+      { label = "Platform", min_width = 24 },
+      { label = "Client ID", min_width = 10 },
+      { label = "Secret", width = 14 },
+      {
+        label = "",
+        actions = {
+          {
+            menu = {
+              { label = "Edit…", command = "edit" },
+              { label = "Delete", command = "delete" },
+            },
+          },
+        },
+      },
+    },
+    rows = rows,
+    row_styles = styles,
+    selected = dialog.selected,
+    on_select = U.bind(select_connection, dialog),
+    on_activate = U.bind(row_command, "connect"),
+    on_command = row_command,
+  })
+  p:hstack({ height = 1, gap = 1, align = "right", render = U.bind(manager_buttons, dialog) })
+end
+
+function M.dialog()
+  if #Connections.items == 0 then
+    return M.edit()
+  end
+  local _, selected = Connections.find(Connections.active_id)
+  local dialog = { selected = selected or 1 }
+  UI.open_dialog("OpenTDF Connections", 100, math.min(20, #Connections.items + 7), U.bind(manager, dialog))
+end
+
+local function buttons(h)
+  h:button({ label = #Connections.items == 0 and "Add Connection" or "Connect…", on_click = M.dialog })
+end
+
 function M.not_connected(p)
   local text = "Not connected."
   if S.status == "connecting" then
     text = "Connecting to " .. S.conn.url .. "…"
   elseif S.status == "error" then
     text = "✕ " .. S.message
-  elseif not S.configured() then
-    text = "Not configured. Set the platform URL and client credentials first."
+  elseif #Connections.items == 0 then
+    text = "Add a connection to get started."
   end
   p:label({ text = text, style = S.status == "error" and "danger" or "muted", margin_top = 1, padding_left = 1 })
   p:hstack({ height = 1, gap = 1, margin_top = 1, padding_left = 1, render = buttons })
@@ -220,6 +411,7 @@ end
 
 -- Opens a feature's tab, or focuses it when it is already open.
 function M.open(id)
+  S.active_view = id
   local tab = M.tabs[id]
   if not tab then
     tab = { id = id, stack = { M.roots[id]() } }
@@ -240,6 +432,14 @@ function M.show(from, key, page)
   end
   open_tab(tab, page.tab_title or page.title)
   return tab
+end
+
+function M.close_all()
+  for id in pairs(M.tabs) do
+    ttt.close_tab(id)
+  end
+  M.tabs = {}
+  S.active_view = nil
 end
 
 function M.close_page(key)
@@ -332,19 +532,15 @@ local Api = require("core.api")
 local Nav = require("app.nav")
 local Router = require("app.router")
 local Connection = require("app.connection")
+local Connections = require("core.connections")
 
 local M = {}
 
 local function status_item()
   local host = U.host(S.conn.url)
-  if S.status == "ok" then
-    return { id = "conn", icon = "●", label = host .. " · " .. S.conn.client_id }
-  elseif S.status == "connecting" then
-    return { id = "conn", icon = "◌", label = "Connecting to " .. host .. "…", muted = true }
-  elseif S.status == "error" then
-    return { id = "conn", icon = "✕", label = host .. " · not connected", muted = true }
-  end
-  return { id = "conn", icon = "○", label = "Set up connection…", muted = true }
+  local item = Connections.find(Connections.active_id)
+  local name = item and item.name or S.conn.client_id
+  return { id = "conn", icon = "●", label = name .. " · " .. host }
 end
 
 local function badge(key)
@@ -360,6 +556,7 @@ local function open(node)
     Connection.dialog()
   else
     Router.open(node.id)
+    S.redraw()
   end
 end
 
@@ -368,11 +565,50 @@ end
 local function on_command(command, node)
   if command == "activate" then
     open(node)
+  elseif command == "disconnect" then
+    Connection.disconnect()
+  elseif command == "connections" then
+    Connection.dialog()
+  elseif command:sub(1, 8) == "connect:" then
+    local item = Connections.find(command:sub(9))
+    if item then
+      Connection.connect(item)
+    end
   end
 end
 
+local function connection_menu()
+  local menu = {}
+  for _, item in ipairs(Connections.items) do
+    menu[#menu + 1] = {
+      label = item.name,
+      command = "connect:" .. item.id,
+      checked = item.id == Connections.active_id and (S.status == "ok" or S.status == "connecting"),
+    }
+  end
+  menu[#menu + 1] = { separator = true }
+  menu[#menu + 1] = { label = "Manage Connections…", command = "connections" }
+  if S.status == "ok" or S.status == "connecting" then
+    menu[#menu + 1] = { separator = true }
+    menu[#menu + 1] = { label = "Disconnect", command = "disconnect" }
+  end
+  return menu
+end
+
 local function link_list(items, b)
-  b:list({ items = items, inset = 1, badge_right = true, on_command = on_command })
+  local menu
+  if items[1].id == "conn" then
+    menu = connection_menu()
+  end
+  b:list({
+    items = items,
+    active_id = S.active_view,
+    inset = 1,
+    badge_right = true,
+    on_command = on_command,
+    node_menu = menu,
+    menu_icon = "⋮",
+  })
 end
 
 local function links(p, items)
@@ -391,16 +627,28 @@ end
 
 local function nothing() end
 
+local function connection_button(h)
+  local label = #Connections.items == 0 and "Add Connection" or "Connect…"
+  if S.status == "connecting" then
+    label = "Connecting…"
+  end
+  h:button({ label = label, disabled = S.status == "connecting", on_click = Connection.dialog })
+end
+
 function M.render(p)
   S.panels.sidebar = p
   Api.ensure_connected()
+  if S.status ~= "ok" then
+    p:hstack({ height = 1, align = "center", padding_top = 1, render = connection_button })
+    if S.status == "error" then
+      p:label({ text = "✕ " .. S.message, style = "danger", padding_left = 1, margin_top = 1 })
+    end
+    return
+  end
   for _, s in ipairs(Nav.sections) do
     section(p, s)
   end
   p:box({ render = nothing })
-  if S.status == "error" then
-    p:label({ text = "✕ " .. S.message, style = "danger", padding_left = 1 })
-  end
   p:divider()
   links(p, { status_item() })
 end
@@ -490,7 +738,7 @@ local S = require("core.state")
 local Layout = require("components.layout")
 local Inputs = require("components.inputs")
 
--- Forms from a field spec: { key, label, kind = "enum"|"multiline"|"readonly",
+-- Forms from a field spec: { key, label, kind = "enum"|"multiline"|"readonly"|"checkbox",
 -- options, value, placeholder, password, required, rows, show(vals) }.
 local M = {}
 
@@ -541,7 +789,7 @@ function M.new_form(spec)
         v = options[1].value
       end
     end
-    form.vals[f.key] = v or ""
+    form.vals[f.key] = v == nil and "" or v
   end
   form.submit = U.bind(submit, form)
   return form
@@ -551,7 +799,9 @@ function M.form_height(form)
   local h = 2
   for _, f in ipairs(form.spec.fields) do
     if shown(form, f) then
-      if f.kind == "multiline" then
+      if f.kind == "checkbox" then
+        h = h + 1
+      elseif f.kind == "multiline" then
         h = h + (f.rows or 6) + 2
       else
         h = h + 3
@@ -575,7 +825,9 @@ local function enum_field(form, f, b)
 end
 
 local function render_field(p, form, f, first)
-  if f.kind == "enum" then
+  if f.kind == "checkbox" then
+    p:checkbox({ label = f.label, checked = form.vals[f.key] == true, on_change = U.bind(set_value, form, f.key) })
+  elseif f.kind == "enum" then
     Layout.frame(p, f.label, U.bind(enum_field, form, f))
   elseif f.kind == "readonly" then
     p:label({ text = f.label .. ": " .. tostring(form.vals[f.key]), style = "muted", border = true })
@@ -1080,8 +1332,19 @@ local S = require("core.state")
 local SVC = require("core.services")
 
 local Api = {}
+local generation = 0
+
+local function current(cb)
+  local started = generation
+  return function(...)
+    if started == generation then
+      cb(...)
+    end
+  end
+end
 
 function Api.reset()
+  generation = generation + 1
   S.token = nil
   S.token_exp = 0
   S.token_endpoint = nil
@@ -1117,7 +1380,7 @@ function Api.discover(cb)
   if S.token_endpoint then
     return cb(nil)
   end
-  net.get_async(S.conn.url .. "/.well-known/opentdf-configuration", U.bind(on_configuration, cb))
+  net.get_async(S.conn.url .. "/.well-known/opentdf-configuration", current(U.bind(on_configuration, cb)))
 end
 
 local function on_token(cb, resp)
@@ -1144,7 +1407,7 @@ local function request_token(cb, err)
       client_id = S.conn.client_id,
       client_secret = S.conn.client_secret,
     }),
-  }, U.bind(on_token, cb))
+  }, current(U.bind(on_token, cb)))
 end
 
 function Api.token(cb)
@@ -1175,10 +1438,13 @@ local function post(path, req, cb, err, token)
   net.post_async(S.conn.url .. "/" .. path, {
     headers = { ["Content-Type"] = "application/json", ["Authorization"] = "Bearer " .. token },
     body = U.encode(req or {}),
-  }, U.bind(on_response, cb))
+  }, current(U.bind(on_response, cb)))
 end
 
 function Api.call(path, req, cb)
+  if S.status == "disconnected" then
+    return cb("Not connected")
+  end
   Api.token(U.bind(post, path, req, cb))
 end
 
@@ -1200,6 +1466,9 @@ function Api.count(key, path, req)
 end
 
 function Api.refresh_counts()
+  if S.status ~= "ok" then
+    return
+  end
   Api.count("namespaces", SVC.NS .. "ListNamespaces")
   Api.count("attributes", SVC.ATTR .. "ListAttributes")
   Api.count("actions", SVC.ACT .. "ListActions")
@@ -1288,6 +1557,26 @@ function Api.connect(cb)
   Api.call(SVC.NS .. "ListNamespaces", { pagination = { limit = 1 } }, U.bind(on_connected, cb))
 end
 
+function Api.disconnect()
+  Api.reset()
+  S.status = "disconnected"
+  S.message = ""
+  S.conn.client_secret = ""
+  S.counts = {}
+  S.namespaces = {}
+  S.providers = {}
+  S.base = nil
+  for _, lv in pairs(S.lists) do
+    lv.gen = lv.gen + 1
+    lv.loading = false
+    lv.loaded = false
+    lv.items = {}
+    lv.all = nil
+    lv.err = nil
+  end
+  S.redraw()
+end
+
 function Api.ensure_connected()
   if S.status == "idle" and S.configured() then
     Api.connect()
@@ -1295,6 +1584,86 @@ function Api.ensure_connected()
 end
 
 return Api
+end
+
+-- src/core/connections.lua --------------------------------------------------
+__modules["core.connections"] = function()
+local storage = require("ttt.storage")
+local U = require("core.util")
+
+local M = {}
+M.items = storage.get("connections") or {}
+M.active_id = storage.get("active_connection")
+
+function M.persist()
+  storage.set("connections", M.items)
+  storage.set("active_connection", M.active_id)
+end
+
+local legacy = storage.get("connection")
+if legacy then
+  if #M.items == 0 then
+    legacy.id = "1"
+    legacy.name = U.host(legacy.url)
+    M.items[1] = legacy
+    M.active_id = legacy.id
+    M.persist()
+  end
+  storage.remove("connection")
+end
+
+function M.find(id)
+  for i, item in ipairs(M.items) do
+    if item.id == id then
+      return item, i
+    end
+  end
+end
+
+function M.credentials(item, secret)
+  return {
+    url = item.url,
+    client_id = item.client_id,
+    client_secret = secret or item.client_secret or "",
+  }
+end
+
+function M.save(id, values)
+  local item, index = M.find(id)
+  if not item then
+    local n = 1
+    while M.find(tostring(n)) do
+      n = n + 1
+    end
+    id, index = tostring(n), #M.items + 1
+  end
+  item = {
+    id = id,
+    name = U.trim(values.name),
+    url = U.trim(values.url):gsub("/+$", ""),
+    client_id = U.trim(values.client_id),
+  }
+  if values.remember_secret then
+    item.client_secret = values.client_secret
+  end
+  M.items[index] = item
+  M.persist()
+  return item
+end
+
+function M.delete(id)
+  local _, index = M.find(id)
+  if not index then
+    return
+  end
+  table.remove(M.items, index)
+  if M.active_id == id then
+    M.active_id = nil
+  end
+  M.persist()
+end
+
+return M
 end
 
 -- src/core/services.lua -----------------------------------------------------
@@ -1317,10 +1686,14 @@ local storage = require("ttt.storage")
 
 local S = {}
 
-S.conn = storage.get("connection") or {}
-S.conn.url = S.conn.url or "http://localhost:8080"
-S.conn.client_id = S.conn.client_id or "opentdf"
-S.conn.client_secret = S.conn.client_secret or ""
+local Connections = require("core.connections")
+local active = Connections.find(Connections.active_id)
+S.conn = active and Connections.credentials(active)
+  or {
+    url = "http://localhost:8080",
+    client_id = "opentdf",
+    client_secret = "",
+  }
 S.settings = storage.get("settings") or {}
 S.page_size = tonumber(S.settings.page_size) or 50
 S.status = "idle"
@@ -2803,6 +3176,14 @@ M.state = {
   result = nil,
 }
 
+function M.reset()
+  M.state.entity = Entity.new()
+  M.state.resources = {}
+  M.state.busy = false
+  M.state.err = nil
+  M.state.result = nil
+end
+
 -- Prefills the form, for example from an entitlement row.
 function M.prefill(entity, fqn)
   M.state.entity = { kind = entity.kind, value = entity.value }
@@ -3014,6 +3395,15 @@ M.state = {
   ran = nil,
   list = UI.list("entitlements", { client = true }),
 }
+
+function M.reset()
+  M.state.entity = Entity.new()
+  M.state.all = nil
+  M.state.entities = nil
+  M.state.ran = nil
+  M.state.busy = false
+  M.state.err = nil
+end
 
 local function by_fqn(a, b)
   if a.fqn == b.fqn then
@@ -5267,6 +5657,8 @@ end
 local function commands()
   local cmds = {
     { id = "opentdf.connection", title = "OpenTDF: Connection…", handler = Connection.dialog },
+    { id = "opentdf.addConnection", title = "OpenTDF: Add Connection", handler = Connection.edit },
+    { id = "opentdf.disconnect", title = "OpenTDF: Disconnect", handler = Connection.disconnect },
     { id = "opentdf.settings", title = "OpenTDF: Settings…", handler = Settings.dialog },
   }
   Nav.each(function(item)
@@ -5279,7 +5671,8 @@ end
 local sidebar_actions = {
   connection = Connection.dialog,
   settings = Settings.dialog,
-  reconnect = Api.connect,
+  reconnect = Connection.connect,
+  disconnect = Connection.disconnect,
   counts = Api.refresh_counts,
 }
 
@@ -5298,6 +5691,7 @@ ttt.register({
       { label = "Connection…", command = "connection" },
       { label = "Settings…", command = "settings" },
       { label = "Reconnect", command = "reconnect" },
+      { label = "Disconnect", command = "disconnect" },
       { label = "Refresh Counts", command = "counts" },
     },
     on_action = on_action,

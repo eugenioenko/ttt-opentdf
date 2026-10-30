@@ -25,6 +25,8 @@ end
 local function commands()
   local cmds = {
     { id = "opentdf.connection", title = "OpenTDF: Connection…", handler = Connection.dialog },
+    { id = "opentdf.addConnection", title = "OpenTDF: Add Connection", handler = Connection.edit },
+    { id = "opentdf.disconnect", title = "OpenTDF: Disconnect", handler = Connection.disconnect },
     { id = "opentdf.settings", title = "OpenTDF: Settings…", handler = Settings.dialog },
   }
   Nav.each(function(item)
@@ -37,7 +39,8 @@ end
 local sidebar_actions = {
   connection = Connection.dialog,
   settings = Settings.dialog,
-  reconnect = Api.connect,
+  reconnect = Connection.connect,
+  disconnect = Connection.disconnect,
   counts = Api.refresh_counts,
 }
 
@@ -56,6 +59,7 @@ ttt.register({
       { label = "Connection…", command = "connection" },
       { label = "Settings…", command = "settings" },
       { label = "Reconnect", command = "reconnect" },
+      { label = "Disconnect", command = "disconnect" },
       { label = "Refresh Counts", command = "counts" },
     },
     on_action = on_action,

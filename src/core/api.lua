@@ -5,8 +5,19 @@ local S = require("core.state")
 local SVC = require("core.services")
 
 local Api = {}
+local generation = 0
+
+local function current(cb)
+  local started = generation
+  return function(...)
+    if started == generation then
+      cb(...)
+    end
+  end
+end
 
 function Api.reset()
+  generation = generation + 1
   S.token = nil
   S.token_exp = 0
   S.token_endpoint = nil
@@ -42,7 +53,7 @@ function Api.discover(cb)
   if S.token_endpoint then
     return cb(nil)
   end
-  net.get_async(S.conn.url .. "/.well-known/opentdf-configuration", U.bind(on_configuration, cb))
+  net.get_async(S.conn.url .. "/.well-known/opentdf-configuration", current(U.bind(on_configuration, cb)))
 end
 
 local function on_token(cb, resp)
@@ -69,7 +80,7 @@ local function request_token(cb, err)
       client_id = S.conn.client_id,
       client_secret = S.conn.client_secret,
     }),
-  }, U.bind(on_token, cb))
+  }, current(U.bind(on_token, cb)))
 end
 
 function Api.token(cb)
@@ -100,10 +111,13 @@ local function post(path, req, cb, err, token)
   net.post_async(S.conn.url .. "/" .. path, {
     headers = { ["Content-Type"] = "application/json", ["Authorization"] = "Bearer " .. token },
     body = U.encode(req or {}),
-  }, U.bind(on_response, cb))
+  }, current(U.bind(on_response, cb)))
 end
 
 function Api.call(path, req, cb)
+  if S.status == "disconnected" then
+    return cb("Not connected")
+  end
   Api.token(U.bind(post, path, req, cb))
 end
 
@@ -125,6 +139,9 @@ function Api.count(key, path, req)
 end
 
 function Api.refresh_counts()
+  if S.status ~= "ok" then
+    return
+  end
   Api.count("namespaces", SVC.NS .. "ListNamespaces")
   Api.count("attributes", SVC.ATTR .. "ListAttributes")
   Api.count("actions", SVC.ACT .. "ListActions")
@@ -211,6 +228,26 @@ function Api.connect(cb)
   Api.reset()
   S.redraw()
   Api.call(SVC.NS .. "ListNamespaces", { pagination = { limit = 1 } }, U.bind(on_connected, cb))
+end
+
+function Api.disconnect()
+  Api.reset()
+  S.status = "disconnected"
+  S.message = ""
+  S.conn.client_secret = ""
+  S.counts = {}
+  S.namespaces = {}
+  S.providers = {}
+  S.base = nil
+  for _, lv in pairs(S.lists) do
+    lv.gen = lv.gen + 1
+    lv.loading = false
+    lv.loaded = false
+    lv.items = {}
+    lv.all = nil
+    lv.err = nil
+  end
+  S.redraw()
 end
 
 function Api.ensure_connected()

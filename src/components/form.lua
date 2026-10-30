@@ -3,7 +3,7 @@ local S = require("core.state")
 local Layout = require("components.layout")
 local Inputs = require("components.inputs")
 
--- Forms from a field spec: { key, label, kind = "enum"|"multiline"|"readonly",
+-- Forms from a field spec: { key, label, kind = "enum"|"multiline"|"readonly"|"checkbox",
 -- options, value, placeholder, password, required, rows, show(vals) }.
 local M = {}
 
@@ -54,7 +54,7 @@ function M.new_form(spec)
         v = options[1].value
       end
     end
-    form.vals[f.key] = v or ""
+    form.vals[f.key] = v == nil and "" or v
   end
   form.submit = U.bind(submit, form)
   return form
@@ -64,7 +64,9 @@ function M.form_height(form)
   local h = 2
   for _, f in ipairs(form.spec.fields) do
     if shown(form, f) then
-      if f.kind == "multiline" then
+      if f.kind == "checkbox" then
+        h = h + 1
+      elseif f.kind == "multiline" then
         h = h + (f.rows or 6) + 2
       else
         h = h + 3
@@ -88,7 +90,9 @@ local function enum_field(form, f, b)
 end
 
 local function render_field(p, form, f, first)
-  if f.kind == "enum" then
+  if f.kind == "checkbox" then
+    p:checkbox({ label = f.label, checked = form.vals[f.key] == true, on_change = U.bind(set_value, form, f.key) })
+  elseif f.kind == "enum" then
     Layout.frame(p, f.label, U.bind(enum_field, form, f))
   elseif f.kind == "readonly" then
     p:label({ text = f.label .. ": " .. tostring(form.vals[f.key]), style = "muted", border = true })

@@ -16,6 +16,15 @@ M.state = {
   list = UI.list("entitlements", { client = true }),
 }
 
+function M.reset()
+  M.state.entity = Entity.new()
+  M.state.all = nil
+  M.state.entities = nil
+  M.state.ran = nil
+  M.state.busy = false
+  M.state.err = nil
+end
+
 local function by_fqn(a, b)
   if a.fqn == b.fqn then
     return a.entity < b.entity

@@ -10,6 +10,8 @@ OpenTDF is an open source system for attribute-based access control and data-cen
 - **An OpenTDF platform** and its identity provider. The [opentdf/platform](https://github.com/opentdf/platform) repository explains how to start one locally with Docker Compose, which serves the platform on `http://localhost:8080` and Keycloak on `http://localhost:8888`.
 - **A client that can manage policy**, with a client ID and secret. On the local platform that is `opentdf` / `secret`.
 
+Persistent sidebar highlighting and a vertical connection menu icon use ttt's optional `active_id` and `menu_icon` widget fields. Builds without them use the default highlighting and icon.
+
 ## Install
 
 In ttt, open the command palette (**Ctrl+P**), run **Plugins: Install from URL** and enter:
@@ -40,16 +42,19 @@ ttt asks you to approve these once:
 
 ## Connect
 
-Open the **OpenTDF** sidebar panel and pick **Set up connection…**, or run **OpenTDF: Connection…**. Fill in:
+Open the **OpenTDF** sidebar panel and click **Add Connection**, or run **OpenTDF: Add Connection**. Give it a name and fill in:
 
 - **Platform URL**, for example `http://localhost:8080`.
-- **Client ID** and **Client secret** of the client to act as.
+- **Client ID**, for example `opentdf` on the local platform.
+- **Client secret** (optional when saving). Check **Save client secret** to remember it between sessions. Otherwise it is only used for this session, and the plugin asks for it when connecting again.
+
+Save as many connections as you need. **OpenTDF: Connection…**, or the centered **Connect…** button near the top of the disconnected sidebar, opens the saved connections list. Navigation links appear after connecting. Use **New Connection** above the table to add one. Select a row and click **Connect** at the bottom right, or press Enter on the row. Each row has a **⋮** menu with **Edit…** and **Delete**. Saving works without a running platform or a client secret.
 
 There is no identity provider URL to enter: the plugin reads the token endpoint from the platform's `/.well-known/opentdf-configuration` and requests a token with the client credentials grant. The token stays in memory and is renewed before it expires.
 
-The connection, client secret included, is saved in plain text in ttt's plugin storage, `~/.config/ttt/state/plugins/opentdf.json`. Use a client meant for administration, on a machine you trust.
+Saved connections and any remembered client secrets are stored in plain text in ttt's plugin storage, `~/.config/ttt/state/plugins/opentdf.json`. Existing single-connection settings are migrated automatically.
 
-The panel's **⋮** menu also has **Reconnect** and **Refresh Counts**.
+The connection row's **⋮** menu lists your saved connections for quick switching and marks the active one. A divider precedes **Manage Connections…**, followed by another divider and **Disconnect** while connected. Disconnect clears the session token and stops automatic reconnection, keeping the saved connection. Switching to another connection closes the previous connection's tabs and clears its cached data. The panel's header **⋮** menu also has **Reconnect**, **Disconnect** and **Refresh Counts**.
 
 ## Settings
 
@@ -79,7 +84,8 @@ ttt loads a plugin from one Lua file, so the source lives in `src/` as modules a
 ```sh
 scripts/build.py           # writes init.lua
 scripts/build.py --check   # fails when init.lua is out of date
-stylua src                 # format (settings in .stylua.toml)
+stylua src tests           # format (settings in .stylua.toml)
+lua tests/connections.lua   # connection lifecycle and persistence tests (Lua 5.1+)
 ```
 
 A module's name is its path: `src/features/kas/store.lua` is `require("features.kas.store")`, and a folder's `init.lua` is the folder itself. `ttt.*` modules resolve as usual, and the bundle runs `src/main.lua`.

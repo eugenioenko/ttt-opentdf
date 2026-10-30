@@ -70,6 +70,7 @@ end
 
 -- Opens a feature's tab, or focuses it when it is already open.
 function M.open(id)
+  S.active_view = id
   local tab = M.tabs[id]
   if not tab then
     tab = { id = id, stack = { M.roots[id]() } }
@@ -90,6 +91,14 @@ function M.show(from, key, page)
   end
   open_tab(tab, page.tab_title or page.title)
   return tab
+end
+
+function M.close_all()
+  for id in pairs(M.tabs) do
+    ttt.close_tab(id)
+  end
+  M.tabs = {}
+  S.active_view = nil
 end
 
 function M.close_page(key)
